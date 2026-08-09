@@ -14,11 +14,11 @@
             height: 100%;
             background-color: #222;
             overflow: hidden;
-            touch-action: none; /* Prevents pull-to-refresh on mobile */
+            touch-action: none; 
             font-family: 'Press Start 2P', monospace;
             color: white;
             user-select: none;
-            -webkit-user-select: none; /* Prevents accidental highlighting when tapping fast */
+            -webkit-user-select: none;
         }
 
         canvas {
@@ -41,7 +41,6 @@
     canvas.width = width;
     canvas.height = height;
 
-    // Handle Resize
     window.addEventListener('resize', () => {
         width = window.innerWidth;
         height = window.innerHeight;
@@ -49,26 +48,42 @@
         canvas.height = height;
     });
 
-    let state = 'TITLE'; 
+    let state = 'TITLE'; // TITLE, MENU, START_LIGHT, PLAY, GAMEOVER
     
     // Core Game Variables
-    let speed = 0; // Measured in Meters Per Second (m/s)
+    let speed = 0; 
     let distance = 0;
-    let maxDistance = 100; // 100m dash
+    let maxDistance = 100; 
     let time = 0;
+    let gameOverDelay = 0;
     
-    // Tap Mechanics
+    // High Score System (Loaded from LocalStorage)
+    let highScore = localStorage.getItem('8bit_track_highscore') ? parseFloat(localStorage.getItem('8bit_track_highscore')) : null;
+
+    // Start Light Variables
+    let lightTimer = 0;
+    let lightState = 0; // 0: "READY", 1: "SET", 2: "GO!", 3: "FALSE START"
+    
+    // Tap Mechanics & Snowflake Particles
     let lastSwipeSide = null; 
+    let snowflakes = [];
+
+    // Initialize background snowflakes
+    for(let i = 0; i < 30; i++) {
+        snowflakes.push({
+            x: Math.random() * width,
+            y: Math.random() * height,
+            size: Math.random() * 3 + 1,
+            speed: Math.random() * 2 + 1
+        });
+    }
 
     // --- INPUT HANDLING ---
-    // Mobile Touch (Fires immediately on touch, no need to release!)
     canvas.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        let touchX = e.changedTouches[0].clientX;
-        processInput(touchX);
+        processInput(e.changedTouches[0].clientX);
     }, {passive: false});
 
-    // Desktop Mouse (for testing on PC)
     canvas.addEventListener('mousedown', (e) => {
         processInput(e.clientX);
     });
@@ -80,27 +95,42 @@
         }
         
         if (state === 'MENU') {
-            resetGame();
-            state = 'PLAY';
+            startCountdownSequence();
+            return;
+        }
+        
+        if (state === 'START_LIGHT') {
+            // Tapping before GO! causes a False Start
+            if (lightState < 2) {
+                lightState = 3; // False Start state
+                lightTimer = 1.5; // Display penalty message for 1.5s
+            }
             return;
         }
         
         if (state === 'GAMEOVER') {
-            state = 'MENU';
+            if (gameOverDelay <= 0) {
+                state = 'MENU';
+            }
             return;
         }
 
         if (state === 'PLAY') {
-            // Screen is split 50/50 down the middle
             let side = x < width / 2 ? 'LEFT' : 'RIGHT';
             
-            // To run, the player MUST alternate thumbs
             if (side !== lastSwipeSide) {
-                speed += 1.5; // Gain 1.5 m/s per alternating tap
-                if (speed > 12.5) speed = 12.5; // Capped at World Record max velocity
+                speed += 1.5; 
+                if (speed > 12.5) speed = 12.5; 
                 lastSwipeSide = side;
             }
         }
+    }
+
+    function startCountdownSequence() {
+        resetGame();
+        state = 'START_LIGHT';
+        lightState = 0; // READY
+        lightTimer = 1.0; // 1 second per light phase
     }
 
     function resetGame() {
@@ -108,6 +138,7 @@
         distance = 0;
         time = 0;
         lastSwipeSide = null;
+        gameOverDelay = 0;
     }
 
     // --- GAME LOOP ---
@@ -117,7 +148,6 @@
         let dt = (currentTime - lastTime) / 1000;
         lastTime = currentTime;
         
-        // Prevent massive physics jumps if the tab is left idle
         if (dt > 0.1) dt = 0.1;
         
         update(dt);
@@ -128,21 +158,57 @@
 
     // --- GAME LOGIC ---
     function update(dt) {
+        // Update Snowflakes background animation
+        snowflakes.forEach(flake => {
+            flake.y += flake.speed + (speed * 0.2); // Snow moves faster as player runs
+            if (flake.y > height) {
+                flake.y = 0;
+                flake.x = Math.random() * width;
+            }
+        });
+
+        if (state === 'START_LIGHT') {
+            lightTimer -= dt;
+            if (lightTimer <= 0) {
+                if (lightState === 0) {
+                    lightState = 1; // SET
+                    lightTimer = 1.0;
+                } else if (lightState === 1) {
+                    lightState = 2; // GO!
+                    lightTimer = 0.4;
+                } else if (lightState === 2) {
+                    state = 'PLAY'; // Transition to active running
+                } else if (lightState === 3) {
+                    // Return to menu after false start penalty
+                    state = 'MENU';
+                }
+            }
+        }
+
         if (state === 'PLAY') {
             time += dt;
-            
-            // 1 unit of speed = 1 meter. 
             distance += speed * dt; 
             
-            // Frame-rate independent friction!
-            // Player loses 85% of their current speed per second if they stop tapping.
             speed -= (speed * 0.85) * dt; 
             if (speed < 0.01) speed = 0;
             
             // Win Condition
             if (distance >= maxDistance) {
-                distance = maxDistance; // Lock perfectly at 100 for the UI
+                distance = maxDistance; 
                 state = 'GAMEOVER';
+                gameOverDelay = 2.0; 
+
+                // Check and Save High Score
+                if (highScore === null || time < highScore) {
+                    highScore = time;
+                    localStorage.setItem('8bit_track_highscore', highScore);
+                }
+            }
+        }
+        
+        if (state === 'GAMEOVER') {
+            if (gameOverDelay > 0) {
+                gameOverDelay -= dt;
             }
         }
     }
@@ -156,46 +222,52 @@
     }
 
     function draw8BitPlayer(cx, cy) {
-        // Bobbing effect scales with the new realistic speed metrics
         let bob = speed > 0.5 ? Math.sin(distance * 5) * (speed * 0.5) : 0;
         
-        // Shadow
         ctx.fillStyle = "rgba(0,0,0,0.3)";
         ctx.beginPath();
         ctx.ellipse(cx, cy + 30, 20, 5, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // Head
-        ctx.fillStyle = "#FFCCAA"; // Skin tone
+        ctx.fillStyle = "#FFCCAA"; 
         ctx.fillRect(cx - 12, cy - 50 + bob, 24, 24); 
 
-        // Torso
-        ctx.fillStyle = "#FF3333"; // Red jersey
+        ctx.fillStyle = "#FF3333"; 
         ctx.fillRect(cx - 16, cy - 25 + bob, 32, 35);
 
-        // Shorts
-        ctx.fillStyle = "#3333FF"; // Blue shorts
+        ctx.fillStyle = "#3333FF"; 
         ctx.fillRect(cx - 16, cy + 10 + bob, 32, 10);
 
-        // Running Legs Animation 
         let legSwing = speed > 0.5 ? Math.sin(distance * 2) * 15 : 0;
         
         ctx.fillStyle = "#FFCCAA";
-        // Left Leg
         ctx.fillRect(cx - 12, cy + 20, 10, 15 + legSwing);
-        // Right Leg
         ctx.fillRect(cx + 2, cy + 20, 10, 15 - legSwing);
         
-        // Shoes
         ctx.fillStyle = "#EEEEEE";
         ctx.fillRect(cx - 14, cy + 35 + legSwing, 14, 8);
         ctx.fillRect(cx, cy + 35 - legSwing, 14, 8);
     }
 
     function draw() {
-        // 1. Draw Environment (Track)
-        ctx.fillStyle = "#4CAF50"; // Grass background
+        ctx.save();
+
+        // Camera Shake effect when running over 10 m/s
+        if (state === 'PLAY' && speed > 10) {
+            let shakeX = (Math.random() - 0.5) * 4;
+            let shakeY = (Math.random() - 0.5) * 4;
+            ctx.translate(shakeX, shakeY);
+        }
+
+        // 1. Draw Environment (Frozen Tundra Track)
+        ctx.fillStyle = "#1E3B5C"; // Deep winter ice-blue background
         ctx.fillRect(0, 0, width, height);
+
+        // Render Snowflakes (Iced Ether theme)
+        ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+        snowflakes.forEach(flake => {
+            ctx.fillRect(flake.x, flake.y, flake.size, flake.size);
+        });
 
         // Red Track
         ctx.fillStyle = "#B73239";
@@ -214,14 +286,12 @@
         for(let i = -150; i < height; i += 150) {
             let y = i + lineOffset;
             
-            // Lane 1
             ctx.beginPath();
             let x1 = width * 0.5 - (y / height) * (width * 0.42);
             ctx.moveTo(x1, y);
             ctx.lineTo(x1, y + 60);
             ctx.stroke();
 
-            // Lane 2
             ctx.beginPath();
             let x2 = width * 0.5 + (y / height) * (width * 0.42);
             ctx.moveTo(x2, y);
@@ -234,9 +304,9 @@
             ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
             ctx.fillRect(0, 0, width, height);
             
-            drawText("8-BIT TRACK", width/2, height * 0.4, Math.min(width/10, 40), "#FFD700");
+            let titleSize = Math.min(width / 14, 40);
+            drawText("8-BIT TRACK", width/2, height * 0.4, titleSize, "#FFD700");
             
-            // Blinking text
             if (Math.floor(Date.now() / 500) % 2 === 0) {
                 drawText("TAP TO START", width/2, height * 0.65, 16, "#FFFFFF");
             }
@@ -246,15 +316,22 @@
             ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
             ctx.fillRect(0, 0, width, height);
             
-            drawText("GAME MODES", width/2, height * 0.25, 24, "#FFFFFF");
+            drawText("GAME MODES", width/2, height * 0.2, 24, "#FFFFFF");
             
             // Mode 1: 100m Dash
             ctx.fillStyle = "#222";
-            ctx.fillRect(width * 0.1, height * 0.35, width * 0.8, 80);
+            ctx.fillRect(width * 0.1, height * 0.3, width * 0.8, 80);
             ctx.strokeStyle = "#00FF00";
             ctx.lineWidth = 3;
-            ctx.strokeRect(width * 0.1, height * 0.35, width * 0.8, 80);
-            drawText("100m Dash", width/2, height * 0.35 + 48, 16, "#00FF00");
+            ctx.strokeRect(width * 0.1, height * 0.3, width * 0.8, 80);
+            drawText("100m Dash", width/2, height * 0.3 + 48, 16, "#00FF00");
+
+            // Display Personal Best High Score on Menu
+            if (highScore !== null) {
+                drawText(`PB: ${highScore.toFixed(2)}s`, width/2, height * 0.47, 12, "#FFD700");
+            } else {
+                drawText(`PB: --.--s`, width/2, height * 0.47, 12, "#888888");
+            }
 
             // Mode 2: Coming Soon
             ctx.fillStyle = "#111";
@@ -263,17 +340,32 @@
             drawText("(Coming Soon)", width/2, height * 0.55 + 60, 10, "#555555");
             
             drawText("Tap anywhere to Play 100m", width/2, height * 0.85, 12, "#AAAAAA");
-        } 
-        
-        else if (state === 'PLAY') {
-            // Draw Player in lower center
+        }
+
+        else if (state === 'START_LIGHT') {
             draw8BitPlayer(width / 2, height * 0.7);
 
-            // Draw HUD
+            ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+            ctx.fillRect(0, 0, width, height);
+
+            if (lightState === 0) {
+                drawText("ON YOUR MARKS", width/2, height * 0.4, 20, "#FFA500");
+            } else if (lightState === 1) {
+                drawText("GET SET", width/2, height * 0.4, 24, "#FFFF00");
+            } else if (lightState === 2) {
+                drawText("GO!", width/2, height * 0.4, 40, "#00FF00");
+            } else if (lightState === 3) {
+                drawText("FALSE START!", width/2, height * 0.4, 20, "#FF0000");
+                drawText("Wait for GO!", width/2, height * 0.5, 14, "#FFFFFF");
+            }
+        }
+        
+        else if (state === 'PLAY') {
+            draw8BitPlayer(width / 2, height * 0.7);
+
             drawText(`DIST: ${Math.floor(distance)}m / ${maxDistance}m`, 15, 30, 12, "#FFF", "left");
             drawText(`TIME: ${time.toFixed(2)}s`, 15, 60, 12, "#FFF", "left");
 
-            // Speed Bar (Scales up to 12.5 Max Speed)
             ctx.fillStyle = "#333";
             let barWidth = Math.min(width * 0.4, 200);
             ctx.fillRect(width/2 - barWidth/2, 20, barWidth, 15);
@@ -283,7 +375,6 @@
             ctx.strokeStyle = "#FFF";
             ctx.strokeRect(width/2 - barWidth/2, 20, barWidth, 15);
 
-            // Instructions Overlay
             if (speed < 1 && distance < 5) {
                 drawText("TAP LEFT", width*0.25, height/2, 12, "rgba(255, 255, 0, 0.8)");
                 drawText("TAP RIGHT", width*0.75, height/2, 12, "rgba(255, 255, 0, 0.8)");
@@ -292,20 +383,27 @@
         } 
         
         else if (state === 'GAMEOVER') {
-            draw8BitPlayer(width / 2, height * 0.7); // Draw player stopped
+            draw8BitPlayer(width / 2, height * 0.7); 
             
             ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
             ctx.fillRect(0, 0, width, height);
             
-            drawText("FINISH!", width/2, height * 0.35, 40, "#00FF00");
-            drawText(`Final Time:`, width/2, height * 0.5, 18, "#FFF");
-            drawText(`${time.toFixed(2)}s`, width/2, height * 0.58, 30, "#FFD700");
+            drawText("FINISH!", width/2, height * 0.3, 35, "#00FF00");
+            drawText(`Final Time:`, width/2, height * 0.44, 16, "#FFF");
+            drawText(`${time.toFixed(2)}s`, width/2, height * 0.52, 26, "#FFD700");
+
+            if (highScore !== null && Math.abs(time - highScore) < 0.001) {
+                drawText("NEW PERSONAL BEST!", width/2, height * 0.63, 12, "#00FFFF");
+            }
             
-            drawText("Tap to return to Menu", width/2, height * 0.8, 12, "#AAAAAA");
+            if (gameOverDelay <= 0) {
+                drawText("Tap to return to Menu", width/2, height * 0.8, 12, "#AAAAAA");
+            }
         }
+
+        ctx.restore();
     }
 
-    // Start Engine
     requestAnimationFrame(loop);
 </script>
 </body>
