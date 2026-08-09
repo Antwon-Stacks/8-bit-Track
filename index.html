@@ -2,330 +2,371 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>8-Bit Track & Field - Master Build</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>8-Bit Track</title>
     <style>
-        * {
-            box-sizing: border-box;
-            user-select: none;
-            -webkit-user-select: none;
-        }
-        body {
+        body, html {
             margin: 0;
             padding: 0;
-            background-color: #0b0b0b;
-            color: #ffffff;
-            font-family: 'Courier New', Courier, monospace;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
+            width: 100%;
+            height: 100%;
+            background-color: #222;
             overflow: hidden;
-            touch-action: none;
+            touch-action: none; /* Crucial to prevent browser swipes refreshing the page */
+            -webkit-user-select: none;
+            user-select: none;
         }
         canvas {
-            background-color: #1a1a1a;
-            box-shadow: 0 0 25px rgba(0, 255, 204, 0.2);
-            image-rendering: pixelated;
-            image-rendering: crisp-edges;
+            display: block;
         }
     </style>
 </head>
 <body>
-
-    <canvas id="gameCanvas" width="480" height="320"></canvas>
-
+    <canvas id="gameCanvas"></canvas>
     <script>
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
 
-        // Responsive Proportional Scaling for Mobile and Desktop
-        function resizeCanvas() {
-            const scale = Math.min(window.innerWidth / 480, window.innerHeight / 320);
-            canvas.style.width = (480 * scale) + 'px';
-            canvas.style.height = (320 * scale) + 'px';
+        // Robust initialization to prevent the grey screen
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
         }
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
+        window.addEventListener('resize', resize);
+        resize(); // Initial sizing
 
-        // Game Hub State Engine
-        let gameState = 'TITLE'; // 'TITLE', 'MENU', 'PLAYING', 'GAMEOVER'
-        let menuSelection = 0;
+        // Game State Variables
+        let gameState = 0; // 0: Title, 1: Menu, 2: 100m, 3: Long Jump, 4: Javelin
+        let speed = 0;
+        const maxSpeed = 16;
+        let distance = 0;
+        let runTimer = 0;
+        let gameOver = false;
+        let resultScore = "";
+        
+        let lastTapSide = null;
+        let actionTriggered = false;
+        
+        // Physics variables for events
+        let jumpY = 0;
+        let jumpVy = 0;
+        let gravity = 0.6;
+        let jumpScore = 0;
+        
+        let javelinX = 0;
+        let javelinY = 0;
+        let javelinVy = 0;
+        let javelinSpeedX = 0;
 
-        const gameModes = [
-            { id: '100m', name: '100M DASH', target: 100, desc: 'Alternate thumbs to hit top speed!' },
-            { id: 'longjump', name: 'LONG JUMP', target: 70, desc: 'Build speed and time your launch!' },
-            { id: 'javelin', name: 'JAVELIN', target: 85, desc: 'Sprint, angle, and throw for distance!' }
-        ];
+        let trackOffset = 0;
+        let frameCount = 0;
 
-        // Active Event State
-        let currentEvent = null;
-        let player = {
-            x: 40,
-            y: 220,
-            speed: 0,
-            maxSpeed: 14,
-            distance: 0,
-            targetDistance: 100,
-            state: 'running', // 'running', 'jumping', 'throwing', 'finished'
-            jumpHeight: 0,
-            jumpVelocity: 0,
-            throwAngle: 45,
-            resultRecorded: false
-        };
-
-        let lastTouchSide = null;
-
-        function startEvent(mode) {
-            currentEvent = mode;
-            player.distance = 0;
-            player.speed = 0;
-            player.targetDistance = mode.target;
-            player.x = 40;
-            player.jumpHeight = 0;
-            player.jumpVelocity = 0;
-            player.state = 'running';
-            player.resultRecorded = false;
-            lastTouchSide = null;
-            gameState = 'PLAYING';
+        function startGame(mode) {
+            gameState = mode;
+            speed = 0;
+            distance = 0;
+            runTimer = 0;
+            gameOver = false;
+            resultScore = "";
+            lastTapSide = null;
+            actionTriggered = false;
+            jumpY = 0;
+            jumpVy = 0;
+            jumpScore = 0;
         }
 
-        // --- INPUT PROCESSING ---
-        function handleInput(xCoord) {
-            if (gameState === 'TITLE') {
-                gameState = 'MENU';
+        // Input Handling
+        let touchStartY = 0;
+
+        function handleTap(x, y) {
+            if (gameState === 0) {
+                gameState = 1; // Go to menu
+                return;
+            }
+            if (gameState === 1) {
+                // Menu selection based on screen thirds
+                if (y < canvas.height / 3) startGame(2); 
+                else if (y < (canvas.height / 3) * 2) startGame(3); 
+                else startGame(4); 
                 return;
             }
 
-            if (gameState === 'MENU') {
-                const screenMid = canvas.clientWidth / 2;
-                if (xCoord < screenMid) {
-                    menuSelection = (menuSelection - 1 + gameModes.length) % gameModes.length;
-                } else {
-                    menuSelection = (menuSelection + 1) % gameModes.length;
-                }
-                return;
-            }
-
-            if (gameState === 'PLAYING') {
-                const screenMid = canvas.clientWidth / 2;
-                const side = xCoord < screenMid ? 'left' : 'right';
-
-                if (player.state === 'running') {
-                    // Alternating thumb requirement for maximum acceleration
-                    if (side !== lastTouchSide) {
-                        player.speed += 1.6;
-                        if (player.speed > player.maxSpeed) player.speed = player.maxSpeed;
-                        lastTouchSide = side;
-                    }
-                } else if (player.state === 'jumping' || player.state === 'throwing') {
-                    // Action triggers for specific events
-                    if (currentEvent.id === 'longjump' && player.jumpHeight === 0) {
-                        player.jumpVelocity = 8.5;
-                    } else if (currentEvent.id === 'javelin' && player.state === 'throwing') {
-                        player.state = 'finished';
-                        gameState = 'GAMEOVER';
-                    }
-                }
-            }
-
-            if (gameState === 'GAMEOVER') {
-                gameState = 'MENU';
+            // Alternating thumb mechanic
+            let side = (x < canvas.width / 2) ? 'left' : 'right';
+            if (side !== lastTapSide) {
+                speed += 2.0;
+                if (speed > maxSpeed) speed = maxSpeed;
+                lastTapSide = side;
             }
         }
 
-        // Touch & Click Event Listeners
+        function triggerAction() {
+            if (gameState === 3 && !actionTriggered && distance < 50) {
+                actionTriggered = true;
+                jumpVy = -11; 
+                jumpScore = speed * 0.6 + (Math.random() * 0.5); 
+            }
+            if (gameState === 4 && !actionTriggered && distance < 50) {
+                actionTriggered = true;
+                javelinX = 100;
+                javelinY = canvas.height / 2 + 10;
+                javelinVy = -12;
+                javelinSpeedX = speed * 1.5;
+                jumpScore = speed * 5.0 + (Math.random() * 2.0);
+                speed = 0; // Player stops to throw
+            }
+        }
+
+        // Touch Listeners
         canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
+            if (gameOver) {
+                gameState = 1; // Return to menu
+                return;
+            }
             for (let i = 0; i < e.changedTouches.length; i++) {
-                const rect = canvas.getBoundingClientRect();
-                const touchX = e.changedTouches[i].clientX - rect.left;
-                handleInput(touchX);
+                touchStartY = e.changedTouches[i].clientY;
+                handleTap(e.changedTouches[i].clientX, e.changedTouches[i].clientY);
             }
         }, { passive: false });
 
-        canvas.addEventListener('click', (e) => {
-            const rect = canvas.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
-            handleInput(clickX);
-        });
-
-        // Desktop Keyboard Fallbacks
-        window.addEventListener('keydown', (e) => {
-            if (gameState === 'TITLE') {
-                gameState = 'MENU';
-            } else if (gameState === 'MENU') {
-                if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
-                    menuSelection = (menuSelection - 1 + gameModes.length) % gameModes.length;
-                } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
-                    menuSelection = (menuSelection + 1) % gameModes.length;
-                } else if (e.key === 'Enter' || e.key === ' ') {
-                    startEvent(gameModes[menuSelection]);
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                let diffY = touchStartY - e.changedTouches[i].clientY;
+                if (diffY > 40) { // Swipe Up Detected
+                    triggerAction();
                 }
-            } else if (gameState === 'PLAYING') {
-                if (e.key === 'a' || e.key === 'ArrowLeft') {
-                    if (lastTouchSide !== 'left') {
-                        player.speed += 1.6;
-                        if (player.speed > player.maxSpeed) player.speed = player.maxSpeed;
-                        lastTouchSide = 'left';
-                    }
-                } else if (e.key === 'd' || e.key === 'ArrowRight') {
-                    if (lastTouchSide !== 'right') {
-                        player.speed += 1.6;
-                        if (player.speed > player.maxSpeed) player.speed = player.maxSpeed;
-                        lastTouchSide = 'right';
-                    }
-                } else if (e.key === ' ' && currentEvent.id === 'longjump' && player.jumpHeight === 0) {
-                    player.jumpVelocity = 8.5;
-                }
-            } else if (gameState === 'GAMEOVER') {
-                gameState = 'MENU';
             }
+        }, { passive: false });
+
+        // Mouse Fallback for Desktop Testing
+        let isMouseDown = false;
+        canvas.addEventListener('mousedown', (e) => {
+            if (gameOver) {
+                gameState = 1;
+                return;
+            }
+            touchStartY = e.clientY;
+            handleTap(e.clientX, e.clientY);
+            isMouseDown = true;
+        });
+        canvas.addEventListener('mouseup', (e) => {
+            if (isMouseDown) {
+                let diffY = touchStartY - e.clientY;
+                if (diffY > 40) triggerAction();
+            }
+            isMouseDown = false;
         });
 
-        window.addEventListener('contextmenu', e => e.preventDefault());
 
-        // --- GAME ENGINE UPDATE LOOP ---
+        // Main Game Loop
         function update() {
-            if (gameState === 'PLAYING') {
-                player.speed *= 0.93; // Natural track friction
-                player.distance += player.speed * 0.04;
-
-                // Event-specific logic paths
-                if (currentEvent.id === 'longjump') {
-                    if (player.jumpVelocity !== 0 || player.jumpHeight > 0) {
-                        player.jumpHeight += player.jumpVelocity;
-                        player.jumpVelocity -= 0.6; // Gravity
-                        if (player.jumpHeight <= 0) {
-                            player.jumpHeight = 0;
-                            player.jumpVelocity = 0;
-                            if (player.distance >= player.targetDistance) gameState = 'GAMEOVER';
-                        }
-                    } else if (player.distance >= player.targetDistance - 15) {
-                        // Auto jump zone trigger if player reaches end of runway
-                        player.jumpVelocity = 8.5;
-                    }
-                } else if (currentEvent.id === 'javelin') {
-                    if (player.distance >= player.targetDistance && player.state === 'running') {
-                        player.state = 'throwing';
-                    }
+            frameCount++;
+            if (gameState >= 2 && !gameOver) {
+                
+                // Track visual movement
+                if (!actionTriggered || gameState === 3) {
+                    trackOffset -= speed;
+                    if (trackOffset <= -40) trackOffset = 0;
                 }
 
-                if (player.distance >= player.targetDistance && currentEvent.id !== 'longjump') {
-                    player.distance = player.targetDistance;
-                    gameState = 'GAMEOVER';
+                // Event Logic
+                if (gameState === 2) { // 100m Dash
+                    speed *= 0.95; // Friction
+                    distance += speed * 0.1;
+                    runTimer += 1 / 60;
+                    if (distance >= 100) {
+                        gameOver = true;
+                        resultScore = runTimer.toFixed(2) + "s";
+                    }
+                } 
+                else if (gameState === 3) { // Long Jump
+                    if (!actionTriggered) {
+                        speed *= 0.96;
+                        distance += speed * 0.1;
+                        if (distance >= 50) {
+                            gameOver = true;
+                            resultScore = "FOUL!";
+                        }
+                    } else {
+                        // Airborne
+                        speed *= 0.98; // Less friction in air
+                        distance += speed * 0.1; 
+                        jumpY += jumpVy;
+                        jumpVy += gravity;
+                        if (jumpY >= 0) {
+                            jumpY = 0;
+                            gameOver = true;
+                            resultScore = "Jumped: " + jumpScore.toFixed(2) + "m";
+                        }
+                    }
+                } 
+                else if (gameState === 4) { // Javelin
+                    if (!actionTriggered) {
+                        speed *= 0.96;
+                        distance += speed * 0.1;
+                        if (distance >= 50) {
+                            gameOver = true;
+                            resultScore = "FOUL!";
+                        }
+                    } else {
+                        // Javelin in air
+                        javelinX += javelinSpeedX;
+                        javelinY += javelinVy;
+                        javelinVy += gravity;
+                        if (javelinY >= canvas.height / 2 + 50) {
+                            gameOver = true;
+                            resultScore = "Thrown: " + jumpScore.toFixed(2) + "m";
+                        }
+                    }
                 }
             }
         }
 
-        // --- RENDER GRAPHICS LOOP ---
         function draw() {
-            // Sky background
-            ctx.fillStyle = '#2266bb';
-            ctx.fillRect(0, 0, 480, 320);
+            // Background Sky
+            ctx.fillStyle = '#87CEEB';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            if (gameState === 'TITLE') {
-                ctx.fillStyle = '#111';
-                ctx.fillRect(0, 0, 480, 320);
+            // Ground Track
+            ctx.fillStyle = '#c85a17';
+            ctx.fillRect(0, canvas.height / 2 + 50, canvas.width, canvas.height / 2);
 
-                ctx.fillStyle = '#ffcc00';
-                ctx.font = '24px "Courier New", monospace';
+            // Horizon Line
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height / 2 + 50);
+            ctx.lineTo(canvas.width, canvas.height / 2 + 50);
+            ctx.stroke();
+
+            if (gameState === 0) {
+                // Title
+                ctx.fillStyle = '#fff';
                 ctx.textAlign = 'center';
-                ctx.fillText('8-BIT TRACK & FIELD', 240, 95);
-
-                ctx.fillStyle = '#00ffcc';
-                ctx.font = '11px "Courier New", monospace';
-                ctx.fillText('ICED ETHER ECOSYSTEM HUB', 240, 125);
-
-                ctx.fillStyle = '#ffffff';
-                ctx.font = '13px "Courier New", monospace';
-                ctx.fillText('TAP OR PRESS ANY KEY TO START', 240, 215);
-            }
-            else if (gameState === 'MENU') {
-                ctx.fillStyle = '#121212';
-                ctx.fillRect(0, 0, 480, 320);
-
-                ctx.fillStyle = '#ffcc00';
-                ctx.font = '20px "Courier New", monospace';
+                ctx.font = 'bold 40px "Courier New"';
+                ctx.fillText("8-BIT TRACK", canvas.width / 2, canvas.height / 3);
+                ctx.font = '20px "Courier New"';
+                ctx.fillText("Tap to Start", canvas.width / 2, canvas.height / 2 + 20);
+            } 
+            else if (gameState === 1) {
+                // Menu
+                ctx.fillStyle = '#fff';
                 ctx.textAlign = 'center';
-                ctx.fillText('SELECT EVENT MODE', 240, 45);
+                ctx.font = 'bold 30px "Courier New"';
+                ctx.fillText("SELECT EVENT", canvas.width / 2, canvas.height / 6 - 20);
+                
+                // Menu Buttons
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.fillRect(20, canvas.height / 6, canvas.width - 40, canvas.height / 3 - 20);
+                ctx.fillRect(20, canvas.height / 2, canvas.width - 40, canvas.height / 3 - 20);
+                ctx.fillRect(20, (canvas.height / 6) * 5, canvas.width - 40, canvas.height / 6 - 20);
 
-                ctx.fillStyle = '#777';
-                ctx.font = '10px "Courier New", monospace';
-                ctx.fillText('Tap Left/Right sides to browse, Center to select', 240, 68);
+                ctx.fillStyle = '#fff';
+                ctx.font = '24px "Courier New"';
+                ctx.fillText("100m Dash", canvas.width / 2, canvas.height / 6 + (canvas.height / 6) - 10);
+                ctx.fillText("Long Jump", canvas.width / 2, canvas.height / 2 + (canvas.height / 6) - 10);
+                ctx.fillText("Javelin", canvas.width / 2, (canvas.height / 6) * 5 + (canvas.height / 12));
+            } 
+            else {
+                // Moving Track Details
+                for (let i = 0; i < canvas.width; i += 40) {
+                    ctx.fillStyle = '#fff';
+                    ctx.fillRect(i + trackOffset, canvas.height / 2 + 65, 20, 4);
+                    ctx.fillStyle = '#aa4c13';
+                    ctx.fillRect(i + trackOffset + 10, canvas.height / 2 + 85, 20, 4);
+                }
 
-                gameModes.forEach((mode, index) => {
-                    let y = 110 + (index * 65);
-                    if (index === menuSelection) {
-                        ctx.fillStyle = '#ff3333';
-                        ctx.fillRect(60, y - 20, 360, 46);
-                        ctx.strokeStyle = '#ffffff';
-                        ctx.lineWidth = 2;
-                        ctx.strokeRect(60, y - 20, 360, 46);
-                        ctx.fillStyle = '#ffffff';
-                    } else {
-                        ctx.fillStyle = '#222';
-                        ctx.fillRect(60, y - 20, 360, 46);
-                        ctx.fillStyle = '#888';
+                // Foul Line (For Long Jump / Javelin)
+                if (gameState === 3 || gameState === 4) {
+                    let distanceLeft = 50 - distance;
+                    let lineX = 100 + (distanceLeft * 20); // Scale distance visually
+                    if (lineX < canvas.width && lineX > -100) {
+                        ctx.fillStyle = 'red';
+                        ctx.fillRect(lineX, canvas.height / 2 + 50, 10, canvas.height / 2);
                     }
-                    ctx.font = '15px "Courier New", monospace';
-                    ctx.textAlign = 'center';
-                    ctx.fillText(mode.name, 240, y + 2);
+                }
 
-                    ctx.font = '10px "Courier New", monospace';
-                    ctx.fillStyle = index === menuSelection ? '#ffee00' : '#555';
-                    ctx.fillText(mode.desc, 240, y + 18);
-                });
-            }
-            else if (gameState === 'PLAYING' || gameState === 'GAMEOVER') {
-                // Stadium Field & Track
-                ctx.fillStyle = '#228833';
-                ctx.fillRect(0, 170, 480, 150);
-
-                ctx.fillStyle = '#884422'; // Running Track Surface
-                ctx.fillRect(0, 190, 480, 110);
-
-                // Track Lane Stripes
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(0, 220); ctx.lineTo(480, 220);
-                ctx.moveTo(0, 260); ctx.lineTo(480, 260);
-                ctx.stroke();
-
-                // Draw Runner Sprite (8-Bit Style Box representation)
-                ctx.fillStyle = '#ff3333';
-                let renderX = 50 + (player.distance / player.targetDistance) * 340;
-                let renderY = 230 - player.jumpHeight;
-                ctx.fillRect(renderX, renderY, 14, 22);
-
-                // HUD Display Overlay
-                ctx.fillStyle = 'rgba(0,0,0,0.4)';
-                ctx.fillRect(10, 10, 460, 45);
-
-                ctx.fillStyle = '#ffffff';
-                ctx.font = '11px "Courier New", monospace';
+                // UI Overlay
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, canvas.width, 100);
+                ctx.fillStyle = '#fff';
                 ctx.textAlign = 'left';
-                ctx.fillText(`EVENT: ${currentEvent.name}`, 20, 28);
-                ctx.fillText(`SPEED: ${(player.speed * 10).toFixed(0)} KM/H`, 20, 44);
-                ctx.fillText(`DIST: ${player.distance.toFixed(1)} / ${player.targetDistance}M`, 260, 28);
+                ctx.font = '18px "Courier New"';
+                
+                if (gameState === 2) {
+                    ctx.fillText("100m Dash", 10, 25);
+                    ctx.fillText("Dist: " + distance.toFixed(1) + "m / 100m", 10, 50);
+                    ctx.fillText("Time: " + runTimer.toFixed(2) + "s", 10, 75);
+                } else if (gameState === 3) {
+                    ctx.fillText("Long Jump", 10, 25);
+                    ctx.fillText("Runway: " + distance.toFixed(1) + "m / 50m", 10, 50);
+                    ctx.fillStyle = 'yellow';
+                    ctx.fillText("Swipe UP to Jump!", 10, 75);
+                } else if (gameState === 4) {
+                    ctx.fillText("Javelin", 10, 25);
+                    ctx.fillText("Runway: " + distance.toFixed(1) + "m / 50m", 10, 50);
+                    ctx.fillStyle = 'yellow';
+                    ctx.fillText("Swipe UP to Throw!", 10, 75);
+                }
 
-                if (gameState === 'GAMEOVER') {
-                    ctx.fillStyle = 'rgba(0,0,0,0.8)';
-                    ctx.fillRect(0, 0, 480, 320);
+                ctx.textAlign = 'right';
+                ctx.fillStyle = '#fff';
+                ctx.fillText("Spd: " + speed.toFixed(1), canvas.width - 10, 25);
+                
+                // Draw Thumb Input Overlay Zones (visual guide)
+                ctx.globalAlpha = 0.1;
+                ctx.fillStyle = (lastTapSide === 'right') ? '#fff' : '#000';
+                ctx.fillRect(0, 100, canvas.width / 2, canvas.height - 100);
+                ctx.fillStyle = (lastTapSide === 'left') ? '#fff' : '#000';
+                ctx.fillRect(canvas.width / 2, 100, canvas.width / 2, canvas.height - 100);
+                ctx.globalAlpha = 1.0;
 
-                    ctx.fillStyle = '#00ffcc';
-                    ctx.font = '22px "Courier New", monospace';
+                // Player Drawing
+                let px = 100;
+                let py = canvas.height / 2 + 10 + jumpY;
+                
+                // Leg animation toggle based on speed
+                let legOffset = (Math.floor(frameCount / 4) % 2 === 0 && speed > 1) ? 10 : 0;
+                
+                // Player Body
+                ctx.fillStyle = '#fff'; // White jersey
+                ctx.fillRect(px, py, 16, 24);
+                // Head
+                ctx.fillStyle = '#ffcc99';
+                ctx.fillRect(px + 2, py - 14, 12, 14);
+                // Legs
+                ctx.fillStyle = '#000';
+                ctx.fillRect(px, py + 24, 6, 12 + legOffset);
+                ctx.fillRect(px + 10, py + 24, 6, 12 - legOffset);
+
+                // Draw Javelin
+                if (gameState === 4 && actionTriggered) {
+                    ctx.fillStyle = '#ccc';
+                    ctx.fillRect(javelinX, javelinY, 40, 4);
+                }
+
+                // Game Over Screen
+                if (gameOver) {
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#fff';
                     ctx.textAlign = 'center';
-                    ctx.fillText('EVENT COMPLETE!', 240, 130);
-
-                    ctx.fillStyle = '#ffffff';
-                    ctx.font = '13px "Courier New", monospace';
-                    ctx.fillText(`FINAL SCORE: ${player.distance.toFixed(2)}M`, 240, 170);
-
-                    ctx.fillStyle = '#ffcc00';
-                    ctx.font = '11px "Courier New", monospace';
-                    ctx.fillText('TAP ANYWHERE TO RETURN TO MENU', 240, 220);
+                    
+                    ctx.font = 'bold 36px "Courier New"';
+                    if (resultScore === "FOUL!") ctx.fillStyle = 'red';
+                    ctx.fillText(resultScore === "FOUL!" ? "FOUL!" : "FINISHED!", canvas.width / 2, canvas.height / 2 - 30);
+                    
+                    if (resultScore !== "FOUL!") {
+                        ctx.fillStyle = 'yellow';
+                        ctx.font = '28px "Courier New"';
+                        ctx.fillText("Score: " + resultScore, canvas.width / 2, canvas.height / 2 + 10);
+                    }
+                    
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '18px "Courier New"';
+                    ctx.fillText("- Tap Anywhere for Menu -", canvas.width / 2, canvas.height / 2 + 60);
                 }
             }
         }
@@ -336,9 +377,8 @@
             requestAnimationFrame(loop);
         }
 
-        window.onload = () => {
-            loop();
-        };
+        // Start Loop
+        loop();
     </script>
 </body>
 </html>
