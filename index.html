@@ -3,29 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>8-Bit Track</title>
+    <title>8-Bit Track & Field</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
         
         body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background-color: #222;
-            overflow: hidden;
-            touch-action: none; 
-            font-family: 'Press Start 2P', monospace;
-            color: white;
-            user-select: none;
-            -webkit-user-select: none;
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background-color: #222; overflow: hidden; touch-action: none; 
+            font-family: 'Press Start 2P', monospace; color: white;
+            user-select: none; -webkit-user-select: none;
         }
-
-        canvas {
-            display: block;
-            width: 100%;
-            height: 100%;
-        }
+        canvas { display: block; width: 100%; height: 100%; }
     </style>
 </head>
 <body>
@@ -35,729 +23,378 @@
 <script>
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
-    
-    let width = window.innerWidth;
-    let height = window.innerHeight;
-    canvas.width = width;
-    canvas.height = height;
+    let width = window.innerWidth, height = window.innerHeight;
+    canvas.width = width; canvas.height = height;
 
     window.addEventListener('resize', () => {
-        width = window.innerWidth;
-        height = window.innerHeight;
-        canvas.width = width;
-        canvas.height = height;
+        width = window.innerWidth; height = window.innerHeight;
+        canvas.width = width; canvas.height = height;
     });
 
-    // Game States
+    // --- GAME CONFIG & DATA ---
+    const EVENTS = {
+        '100M': { name: '100m Dash', maxDist: 100, isTime: true, color: '#00FF00' },
+        'HURDLES': { name: '110m Hurdles', maxDist: 110, isTime: true, color: '#33CCFF' },
+        '400M': { name: '400m Dash', maxDist: 400, isTime: true, color: '#FF33FF' },
+        'LONG_JUMP': { name: 'Long Jump', maxDist: 40, isTime: false, color: '#FFCC00' },
+        'JAVELIN': { name: 'Javelin', maxDist: 40, isTime: false, color: '#FF6600' }
+    };
+
     let state = 'TITLE'; 
     let selectedEventKey = '100M'; 
-    let leaderboardViewKey = '100M'; // '100M', 'HURDLES', or 'MEET'
+    let leaderboardViewKey = '100M'; 
 
-    // Track Meet Variables
     let isTrackMeet = false;
-    let trackMeetQueue = ['100M', 'HURDLES'];
+    let trackMeetQueue = ['100M', 'HURDLES', '400M']; // Running events only for cumulative time
     let trackMeetIndex = 0;
     let trackMeetTotalTime = 0;
 
-    // Core Game Variables
-    let speed = 0; 
-    let distance = 0;
-    let maxDistance = 100; 
-    let time = 0;
-    let gameOverDelay = 0;
+    let speed = 0, distance = 0, time = 0, gameOverDelay = 0;
+    let lastSwipeSide = null;
+
+    // Hurdles Variables
+    let hurdles = [];
+    let isJumping = false, jumpHeight = 0, stumbleTimer = 0;
+
+    // 400m Variables
+    let stamina = 100;
+
+    // Long Jump / Javelin Variables
+    let isChargingJump = false, jumpCharge = 0;
+    let javelinThrown = false, javelinFinalDist = 0, javelinAnimCounter = 0;
+    let flightSpeed = 0, jumpStartDist = 0;
+    let swipeStartX = 0, swipeStartY = 0, swipeStartTime = 0;
+
+    let lightTimer = 0, lightState = 0; 
+
+    // --- LEADERBOARDS ---
+    function getMockLB(isTime) {
+        let arr = [];
+        for(let i=0; i<10; i++) {
+            arr.push({ name: ["BLT","GAL","FRO","ZRO","APX","NOB","SKY","TRK","GRD","RUN"][i], 
+                       score: isTime ? 10 + (i*1.5) : 80 - (i*5) });
+        }
+        return arr;
+    }
     
-    // Leaderboards Data Structure (Stored in LocalStorage)
     let leaderboards = {
-        '100M': JSON.parse(localStorage.getItem('8bit_lb_100m')) || [
-            {name: "BLT", time: 9.58}, {name: "GAL", time: 9.92}, {name: "FRO", time: 10.15},
-            {name: "BLZ", time: 10.42}, {name: "PIR", time: 10.88}, {name: "ZRO", time: 11.20},
-            {name: "SNO", time: 11.55}, {name: "DSH", time: 11.90}, {name: "APX", time: 12.30}, {name: "NOB", time: 13.10}
-        ],
-        'HURDLES': JSON.parse(localStorage.getItem('8bit_lb_hurdles')) || [
-            {name: "LEP", time: 12.10}, {name: "BND", time: 12.65}, {name: "ICK", time: 13.02},
-            {name: "FST", time: 13.50}, {name: "SKY", time: 14.12}, {name: "TRK", time: 14.80},
-            {name: "PLS", time: 15.20}, {name: "GRD", time: 15.90}, {name: "RUN", time: 16.50}, {name: "WLK", time: 18.00}
-        ],
-        'MEET': JSON.parse(localStorage.getItem('8bit_lb_meet')) || [
-            {name: "GLD", time: 22.00}, {name: "SLV", time: 22.80}, {name: "BRZ", time: 23.50},
-            {name: "ICE", time: 24.20}, {name: "ETH", time: 25.14}, {name: "RUN", time: 26.50},
-            {name: "TND", time: 28.00}, {name: "MCH", time: 30.00}, {name: "SLO", time: 32.50}, {name: "AFK", time: 35.00}
-        ]
+        '100M': JSON.parse(localStorage.getItem('lb_100M')) || getMockLB(true),
+        'HURDLES': JSON.parse(localStorage.getItem('lb_HURDLES')) || getMockLB(true),
+        '400M': JSON.parse(localStorage.getItem('lb_400M')) || getMockLB(true),
+        'LONG_JUMP': JSON.parse(localStorage.getItem('lb_LONG_JUMP')) || getMockLB(false).map(e => ({name: e.name, score: e.score/10})),
+        'JAVELIN': JSON.parse(localStorage.getItem('lb_JAVELIN')) || getMockLB(false),
+        'MEET': JSON.parse(localStorage.getItem('lb_MEET')) || getMockLB(true).map(e => ({name: e.name, score: e.score*3}))
     };
 
-    // Hurdles Specific Variables
-    let hurdles = [];
-    let jumpHeight = 0;
-    let isJumping = false;
-    let stumbleTimer = 0;
-
-    // Start Light Variables
-    let lightTimer = 0;
-    let lightState = 0; 
-    let lastSwipeSide = null; 
-    
-    // Background Snowflakes
-    let snowflakes = [];
-    for(let i = 0; i < 30; i++) {
-        snowflakes.push({
-            x: Math.random() * width,
-            y: Math.random() * height,
-            size: Math.random() * 3 + 1,
-            speed: Math.random() * 2 + 1
-        });
+    function formatScore(score, eKey) {
+        if (score <= 0) return "FOUL";
+        return (eKey === 'MEET' || EVENTS[eKey].isTime) ? score.toFixed(2) + 's' : score.toFixed(2) + 'm';
     }
 
     // --- INPUT HANDLING ---
-    canvas.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        
-        // Dual-thumb jump check in Hurdles play mode
-        if (state === 'PLAY' && selectedEventKey === 'HURDLES') {
-            let hasLeft = false;
-            let hasRight = false;
-            for (let i = 0; i < e.touches.length; i++) {
-                if (e.touches[i].clientX < width / 2) hasLeft = true;
-                else hasRight = true;
-            }
-            if (hasLeft && hasRight) {
-                if (!isJumping && stumbleTimer <= 0) {
-                    isJumping = true;
-                    jumpHeight = 1.0;
-                }
-                return;
+    function handleTouchStart(x, y, touchesLength) {
+        swipeStartX = x; swipeStartY = y; swipeStartTime = performance.now();
+
+        if (state === 'PLAY' && selectedEventKey === 'LONG_JUMP' && touchesLength >= 2) {
+            isChargingJump = true; jumpCharge = 0; return;
+        }
+        if (state === 'PLAY' && selectedEventKey === 'HURDLES' && touchesLength >= 2) {
+            if (!isJumping && stumbleTimer <= 0) { isJumping = true; jumpHeight = 1.0; }
+            return;
+        }
+        processInput(x, y);
+    }
+
+    function handleTouchEnd(x, y, touchesLength) {
+        if (state === 'PLAY' && selectedEventKey === 'JAVELIN' && !javelinThrown) {
+            let dt = performance.now() - swipeStartTime;
+            if (dt < 500 && (swipeStartY - y) > 40) {
+                executeJavelinThrow(swipeStartX, swipeStartY, x, y);
             }
         }
+        if (state === 'PLAY' && selectedEventKey === 'LONG_JUMP' && isChargingJump && touchesLength < 2) {
+            executeJump();
+        }
+    }
 
-        let touchX = e.touches[0].clientX;
-        let touchY = e.touches[0].clientY;
-        processInput(touchX, touchY);
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        handleTouchStart(e.touches[0].clientX, e.touches[0].clientY, e.touches.length);
     }, {passive: false});
 
-    canvas.addEventListener('mousedown', (e) => {
-        processInput(e.clientX, e.clientY);
+    canvas.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        let x = e.changedTouches[0].clientX, y = e.changedTouches[0].clientY;
+        handleTouchEnd(x, y, e.touches.length);
     });
 
+    canvas.addEventListener('mousedown', (e) => handleTouchStart(e.clientX, e.clientY, 1));
+    canvas.addEventListener('mouseup', (e) => handleTouchEnd(e.clientX, e.clientY, 0));
+
     window.addEventListener('keydown', (e) => {
-        if (e.code === 'Space' && state === 'PLAY' && selectedEventKey === 'HURDLES') {
-            if (!isJumping && stumbleTimer <= 0) {
-                isJumping = true;
-                jumpHeight = 1.0;
+        if (e.code === 'Space') {
+            if (state === 'PLAY' && selectedEventKey === 'HURDLES' && !isJumping && stumbleTimer <= 0) {
+                isJumping = true; jumpHeight = 1.0;
             }
+            if (state === 'PLAY' && selectedEventKey === 'LONG_JUMP' && !isChargingJump) {
+                isChargingJump = true; jumpCharge = 0;
+            }
+        }
+    });
+    window.addEventListener('keyup', (e) => {
+        if (e.code === 'Space' && state === 'PLAY' && selectedEventKey === 'LONG_JUMP' && isChargingJump) {
+            executeJump();
         }
     });
 
     function processInput(x, y) {
-        if (state === 'TITLE') {
-            state = 'MENU';
-            return;
-        }
+        if (state === 'TITLE') { state = 'MENU'; return; }
         
         if (state === 'MENU') {
-            if (y > height * 0.32 && y < height * 0.44) {
-                state = 'EVENT_SELECT';
-                return;
-            }
-            if (y > height * 0.48 && y < height * 0.60) {
-                startTrackMeet();
-                return;
-            }
-            if (y > height * 0.64 && y < height * 0.76) {
-                state = 'LEADERBOARD';
-                leaderboardViewKey = '100M';
-                return;
-            }
+            if (y > height * 0.32 && y < height * 0.44) { state = 'EVENT_SELECT'; return; }
+            if (y > height * 0.48 && y < height * 0.60) { startTrackMeet(); return; }
+            if (y > height * 0.64 && y < height * 0.76) { state = 'LEADERBOARD'; leaderboardViewKey = '100M'; return; }
             return;
         }
 
         if (state === 'EVENT_SELECT') {
-            if (y > height * 0.85) {
-                state = 'MENU';
-                return;
-            }
-            if (y > height * 0.30 && y < height * 0.45) {
-                selectedEventKey = '100M';
-                state = 'EVENT_DETAIL';
-                return;
-            }
-            if (y > height * 0.50 && y < height * 0.65) {
-                selectedEventKey = 'HURDLES';
-                state = 'EVENT_DETAIL';
-                return;
+            if (y > height * 0.88) { state = 'MENU'; return; }
+            let keys = Object.keys(EVENTS);
+            for(let i=0; i<keys.length; i++) {
+                let btnY = height * 0.20 + (i * height * 0.13);
+                if (y > btnY && y < btnY + (height * 0.10)) {
+                    selectedEventKey = keys[i]; state = 'EVENT_DETAIL'; return;
+                }
             }
             return;
         }
 
         if (state === 'EVENT_DETAIL') {
-            if (y > height * 0.85 && x < width / 2) {
-                state = 'EVENT_SELECT';
-                return;
-            }
-            if (y > height * 0.72 && y < height * 0.83) {
-                isTrackMeet = false;
-                startCountdownSequence();
-                return;
-            }
+            if (y > height * 0.85 && x < width / 2) { state = 'EVENT_SELECT'; return; }
+            if (y > height * 0.72 && y < height * 0.83) { isTrackMeet = false; startCountdownSequence(); return; }
             return;
         }
 
         if (state === 'LEADERBOARD') {
-            if (y > height * 0.88) {
-                state = 'MENU';
-                return;
-            }
-            // Tab Toggle (Top bar: y ~ 0.18)
-            if (y > height * 0.15 && y < height * 0.23) {
-                if (x < width * 0.33) leaderboardViewKey = '100M';
-                else if (x < width * 0.66) leaderboardViewKey = 'HURDLES';
-                else leaderboardViewKey = 'MEET';
-                return;
+            if (y > height * 0.88) { state = 'MENU'; return; }
+            
+            // 2 Rows of 3 Tabs
+            let isTopRow = y > height * 0.12 && y < height * 0.18;
+            let isBotRow = y > height * 0.20 && y < height * 0.26;
+            
+            if (isTopRow || isBotRow) {
+                let col = x < width * 0.33 ? 0 : (x < width * 0.66 ? 1 : 2);
+                if (isTopRow && col === 0) leaderboardViewKey = '100M';
+                if (isTopRow && col === 1) leaderboardViewKey = 'HURDLES';
+                if (isTopRow && col === 2) leaderboardViewKey = '400M';
+                if (isBotRow && col === 0) leaderboardViewKey = 'LONG_JUMP';
+                if (isBotRow && col === 1) leaderboardViewKey = 'JAVELIN';
+                if (isBotRow && col === 2) leaderboardViewKey = 'MEET';
             }
             return;
         }
 
-        if (state === 'TRACK_MEET_INTRO') {
-            startCountdownSequence();
-            return;
-        }
+        if (state === 'TRACK_MEET_INTRO') { startCountdownSequence(); return; }
         
         if (state === 'START_LIGHT') {
-            if (lightState < 2) {
-                lightState = 3; 
-                lightTimer = 1.5;
-            }
+            if (lightState < 2) { lightState = 3; lightTimer = 1.5; }
             return;
         }
         
-        if (state === 'GAMEOVER') {
-            if (gameOverDelay <= 0) {
-                if (isTrackMeet) {
-                    advanceTrackMeet();
-                } else {
-                    state = 'MENU';
-                }
-            }
+        if (state === 'GAMEOVER' && gameOverDelay <= 0) {
+            if (isTrackMeet) advanceTrackMeet(); else state = 'MENU';
             return;
         }
-
-        if (state === 'TRACK_MEET_SUMMARY') {
-            state = 'MENU';
-            return;
-        }
+        if (state === 'TRACK_MEET_SUMMARY') { state = 'MENU'; return; }
 
         if (state === 'PLAY') {
             if (stumbleTimer <= 0) {
                 let side = x < width / 2 ? 'LEFT' : 'RIGHT';
                 if (side !== lastSwipeSide) {
-                    speed += 1.3; 
-                    if (speed > 11.5) speed = 11.5; 
+                    if (stamina > 0 || selectedEventKey !== '400M') {
+                        speed += 1.3; 
+                        if (speed > 11.5) speed = 11.5; 
+                    } else {
+                        speed += 0.5; // Bonked speed gain
+                        if (speed > 4.0) speed = 4.0;
+                    }
                     lastSwipeSide = side;
                 }
             }
         }
     }
 
+    // --- GAME LOGIC EXECUTION ---
+    function executeJump() {
+        isChargingJump = false; isJumping = true; state = 'PLAY_FLIGHT';
+        let chargeDiff = Math.abs(0.4 - jumpCharge); 
+        let chargeMultiplier = Math.max(0, 1 - (chargeDiff * 1.5)); 
+        flightSpeed = Math.max(2, speed);
+        jumpHeight = 1.2; 
+        jumpStartDist = distance;
+        javelinFinalDist = (flightSpeed * 0.45) + (flightSpeed * 0.45 * chargeMultiplier); 
+    }
+
+    function executeJavelinThrow(sx, sy, ex, ey) {
+        javelinThrown = true; state = 'PLAY_FLIGHT';
+        let dy = sy - ey, dx = ex - sx; 
+        let angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+        let diff = Math.abs(45 - angleDeg);
+        let angleEfficiency = Math.max(0.1, 1 - (diff / 70)); 
+        javelinFinalDist = (speed * 7.5) * angleEfficiency; 
+        javelinAnimCounter = 0;
+    }
+
     function startTrackMeet() {
-        isTrackMeet = true;
-        trackMeetIndex = 0;
-        trackMeetTotalTime = 0;
-        selectedEventKey = trackMeetQueue[trackMeetIndex];
-        state = 'TRACK_MEET_INTRO';
+        isTrackMeet = true; trackMeetIndex = 0; trackMeetTotalTime = 0;
+        selectedEventKey = trackMeetQueue[trackMeetIndex]; state = 'TRACK_MEET_INTRO';
     }
 
     function advanceTrackMeet() {
         trackMeetIndex++;
         if (trackMeetIndex < trackMeetQueue.length) {
-            selectedEventKey = trackMeetQueue[trackMeetIndex];
-            state = 'TRACK_MEET_INTRO';
+            selectedEventKey = trackMeetQueue[trackMeetIndex]; state = 'TRACK_MEET_INTRO';
         } else {
-            state = 'TRACK_MEET_SUMMARY';
-            submitScoreToLeaderboard('MEET', trackMeetTotalTime);
+            state = 'TRACK_MEET_SUMMARY'; submitScoreToLeaderboard('MEET', trackMeetTotalTime);
         }
     }
 
     function startCountdownSequence() {
-        resetGame();
-        state = 'START_LIGHT';
-        lightState = 0; 
-        lightTimer = 1.0; 
-    }
-
-    function resetGame() {
-        speed = 0;
-        distance = 0;
-        time = 0;
-        lastSwipeSide = null;
-        gameOverDelay = 0;
-        jumpHeight = 0;
-        isJumping = false;
-        stumbleTimer = 0;
+        speed = distance = time = jumpHeight = stumbleTimer = jumpCharge = 0;
+        stamina = 100;
+        lastSwipeSide = null; gameOverDelay = 0;
+        isJumping = isChargingJump = javelinThrown = false;
         
         hurdles = [];
         if (selectedEventKey === 'HURDLES') {
-            for (let d = 18; d < 95; d += 18) {
-                hurdles.push({ pos: d, cleared: false });
-            }
+            for (let d = 18; d < 105; d += 18) hurdles.push({ pos: d, cleared: false });
         }
+        
+        state = 'START_LIGHT'; lightState = 0; lightTimer = 1.0; 
     }
 
-    // --- GAME LOOP ---
     let lastTime = performance.now();
-    
     function loop(currentTime) {
         let dt = (currentTime - lastTime) / 1000;
         lastTime = currentTime;
-        
         if (dt > 0.1) dt = 0.1;
-        
-        update(dt);
-        draw();
-        
-        requestAnimationFrame(loop);
+        update(dt); draw(); requestAnimationFrame(loop);
     }
 
-    // --- GAME LOGIC ---
     function update(dt) {
-        snowflakes.forEach(flake => {
-            flake.y += flake.speed + (speed * 0.2); 
-            if (flake.y > height) {
-                flake.y = 0;
-                flake.x = Math.random() * width;
-            }
-        });
-
         if (state === 'START_LIGHT') {
             lightTimer -= dt;
             if (lightTimer <= 0) {
-                if (lightState === 0) {
-                    lightState = 1; 
-                    lightTimer = 1.0;
-                } else if (lightState === 1) {
-                    lightState = 2; 
-                    lightTimer = 0.4;
-                } else if (lightState === 2) {
-                    state = 'PLAY'; 
-                } else if (lightState === 3) {
-                    state = isTrackMeet ? 'TRACK_MEET_INTRO' : 'MENU';
-                }
+                if (lightState === 0) { lightState = 1; lightTimer = 1.0; }
+                else if (lightState === 1) { lightState = 2; lightTimer = 0.4; }
+                else if (lightState === 2) { state = 'PLAY'; }
+                else if (lightState === 3) { state = isTrackMeet ? 'TRACK_MEET_INTRO' : 'MENU'; }
             }
         }
 
-        if (state === 'PLAY') {
-            time += dt;
+        if (state === 'PLAY' || state === 'PLAY_FLIGHT') {
+            if (state === 'PLAY') time += dt;
 
-            if (stumbleTimer > 0) {
-                stumbleTimer -= dt;
-                // REFINED MECHANIC: Keep 30% of speed so it feels like a fluid trip, not a brick wall
-                speed = Math.min(speed, speed * 0.3); 
-            } else {
-                speed -= (speed * 0.88) * dt; 
-                if (speed < 0.01) speed = 0;
+            // 400m Stamina Mechanics
+            if (selectedEventKey === '400M' && state === 'PLAY') {
+                stamina -= (speed * 0.35) * dt; 
+                if (speed < 6) stamina += (6 - speed) * dt * 2.5;
+                if (stamina < 0) stamina = 0;
+                if (stamina > 100) stamina = 100;
+                if (stamina <= 0 && speed > 4.0) speed -= 15 * dt; // Hard bonk braking
             }
-            
-            distance += speed * dt; 
 
-            if (isJumping) {
-                jumpHeight -= dt * 3.2; 
-                if (jumpHeight <= 0) {
-                    jumpHeight = 0;
-                    isJumping = false;
+            // Normal Running Physics
+            if (state === 'PLAY') {
+                if (stumbleTimer > 0) {
+                    stumbleTimer -= dt; speed = Math.min(speed, speed * 0.3); 
+                } else {
+                    speed -= (speed * 0.85) * dt; 
+                    if (speed < 0.01) speed = 0;
                 }
+                distance += speed * dt;
+                if (isChargingJump) jumpCharge += dt;
             }
 
-            if (selectedEventKey === 'HURDLES') {
+            // Hurdles Check
+            if (selectedEventKey === 'HURDLES' && state === 'PLAY') {
+                if (isJumping) {
+                    jumpHeight -= dt * 3.2; 
+                    if (jumpHeight <= 0) { jumpHeight = 0; isJumping = false; }
+                }
                 hurdles.forEach(h => {
                     if (!h.cleared && Math.abs(distance - h.pos) < 1.5) {
-                        if (jumpHeight > 0.15) {
-                            h.cleared = true; 
-                        } else {
-                            stumbleTimer = 0.8;
-                            h.cleared = true;
-                        }
+                        if (jumpHeight > 0.15) h.cleared = true; 
+                        else { stumbleTimer = 0.8; h.cleared = true; }
                     }
                 });
             }
             
-            if (distance >= maxDistance) {
-                distance = maxDistance; 
-                state = 'GAMEOVER';
-                gameOverDelay = 2.0; 
+            // Foul Line Checks (Field Events)
+            let isField = selectedEventKey === 'LONG_JUMP' || selectedEventKey === 'JAVELIN';
+            if (isField && state === 'PLAY' && distance >= 40) {
+                distance = 40; state = 'GAMEOVER'; gameOverDelay = 2.0;
+                submitScoreToLeaderboard(selectedEventKey, 0); // FOUL
+            }
 
-                if (isTrackMeet) {
-                    trackMeetTotalTime += time;
-                } else {
-                    submitScoreToLeaderboard(selectedEventKey, time);
+            // Flight State Logic
+            if (state === 'PLAY_FLIGHT') {
+                if (selectedEventKey === 'LONG_JUMP') {
+                    distance += flightSpeed * dt;
+                    jumpHeight -= dt * 2.0; 
+                    if (jumpHeight <= 0) {
+                        jumpHeight = 0; state = 'GAMEOVER'; gameOverDelay = 2.0;
+                        let jumpDist = Math.max(0, distance - 40); // Measure from board
+                        submitScoreToLeaderboard('LONG_JUMP', jumpDist);
+                    }
+                } else if (selectedEventKey === 'JAVELIN') {
+                    javelinAnimCounter += dt * 45; 
+                    if (javelinAnimCounter >= javelinFinalDist) {
+                        javelinAnimCounter = javelinFinalDist; state = 'GAMEOVER'; gameOverDelay = 2.0;
+                        submitScoreToLeaderboard('JAVELIN', javelinFinalDist);
+                    }
                 }
+            }
+            
+            // Finish Line (Track Events)
+            if (!isField && distance >= EVENTS[selectedEventKey].maxDist) {
+                distance = EVENTS[selectedEventKey].maxDist; state = 'GAMEOVER'; gameOverDelay = 2.0;
+                if (isTrackMeet) trackMeetTotalTime += time;
+                else submitScoreToLeaderboard(selectedEventKey, time);
             }
         }
         
-        if (state === 'GAMEOVER') {
-            if (gameOverDelay > 0) {
-                gameOverDelay -= dt;
-            }
-        }
+        if (state === 'GAMEOVER' && gameOverDelay > 0) gameOverDelay -= dt;
     }
 
-    // REFINED MECHANIC: Classic arcade prompt for new high scores
-    function submitScoreToLeaderboard(eventKey, newTime) {
-        // Use a slight timeout so the user sees the Game Over screen BEFORE the prompt pauses the browser
+    function submitScoreToLeaderboard(eventKey, newScore) {
         setTimeout(() => {
             let lb = leaderboards[eventKey];
-            
-            // Check if time is fast enough to make the top 10
-            if (lb.length < 10 || newTime < lb[lb.length - 1].time) {
-                let pName = prompt("🏆 NEW TOP 10 SCORE! 🏆\nEnter 3 Initials:", "AAA");
-                if (pName) {
-                    pName = pName.substring(0, 3).toUpperCase();
-                } else {
-                    pName = "YOU"; // Fallback if they hit cancel
+            let isTime = (eventKey === 'MEET' || EVENTS[eventKey].isTime);
+            let isTop10 = false;
+
+            if (newScore > 0) {
+                if (lb.length < 10) isTop10 = true;
+                else {
+                    let worstScore = lb[lb.length - 1].score;
+                    isTop10 = isTime ? (newScore < worstScore) : (newScore > worstScore);
                 }
-                
-                lb.push({ name: pName, time: newTime });
-                lb.sort((a, b) => a.time - b.time); 
+            }
+
+            if (isTop10) {
+                let pName = prompt(`🏆 NEW TOP 10 SCORE! 🏆\nEnter 3 Initials:`, "YOU");
+                pName = pName ? pName.substring(0, 3).toUpperCase() : "YOU";
+                lb.push({ name: pName, score: newScore });
+                lb.sort((a, b) => isTime ? a.score - b.score : b.score - a.score); 
                 if (lb.length > 10) lb.pop(); 
                 
                 leaderboards[eventKey] = lb;
-                let storageKey = eventKey === '100M' ? '8bit_lb_100m' : (eventKey === 'HURDLES' ? '8bit_lb_hurdles' : '8bit_lb_meet');
-                localStorage.setItem(storageKey, JSON.stringify(lb));
+                localStorage.setItem(`lb_${eventKey}`, JSON.stringify(lb));
             }
         }, 500);
     }
 
     // --- RENDERING ---
     function drawText(text, x, y, size, color="white", align="center") {
-        ctx.fillStyle = color;
-        ctx.font = `${size}px 'Press Start 2P', monospace`;
-        ctx.textAlign = align;
-        ctx.fillText(text, x, y);
-    }
-
-    function draw8BitPlayer(cx, cy) {
-        let jumpOffset = isJumping ? Math.sin(jumpHeight * Math.PI) * 55 : 0;
-        let bob = (speed > 0.5 && jumpOffset === 0) ? Math.sin(distance * 5) * (speed * 0.5) : 0;
-        
-        let renderY = cy - jumpOffset;
-
-        ctx.fillStyle = "rgba(0,0,0,0.3)";
-        ctx.beginPath();
-        ctx.ellipse(cx, cy + 30, Math.max(5, 20 - jumpOffset*0.2), Math.max(2, 5 - jumpOffset*0.05), 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.save();
-        if (stumbleTimer > 0) {
-            ctx.translate(cx, renderY);
-            ctx.rotate(0.4); 
-            ctx.translate(-cx, -renderY);
-        }
-
-        ctx.fillStyle = "#FFCCAA"; 
-        ctx.fillRect(cx - 12, renderY - 50 + bob, 24, 24); 
-
-        ctx.fillStyle = selectedEventKey === 'HURDLES' ? "#33CC33" : "#FF3333"; 
-        ctx.fillRect(cx - 16, renderY - 25 + bob, 32, 35);
-
-        ctx.fillStyle = "#3333FF"; 
-        ctx.fillRect(cx - 16, renderY + 10 + bob, 32, 10);
-
-        let legSwing = speed > 0.5 ? Math.sin(distance * 2) * 15 : 0;
-        
-        ctx.fillStyle = "#FFCCAA";
-        ctx.fillRect(cx - 12, renderY + 20, 10, 15 + legSwing);
-        ctx.fillRect(cx + 2, renderY + 20, 10, 15 - legSwing);
-        
-        ctx.fillStyle = "#EEEEEE";
-        ctx.fillRect(cx - 14, renderY + 35 + legSwing, 14, 8);
-        ctx.fillRect(cx, renderY + 35 - legSwing, 14, 8);
-
-        ctx.restore();
-    }
-
-    function draw() {
-        ctx.save();
-
-        if (state === 'PLAY' && speed > 10) {
-            let shakeX = (Math.random() - 0.5) * 4;
-            let shakeY = (Math.random() - 0.5) * 4;
-            ctx.translate(shakeX, shakeY);
-        }
-
-        ctx.fillStyle = "#1E3B5C"; 
-        ctx.fillRect(0, 0, width, height);
-
-        ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
-        snowflakes.forEach(flake => {
-            ctx.fillRect(flake.x, flake.y, flake.size, flake.size);
-        });
-
-        ctx.fillStyle = "#B73239";
-        ctx.beginPath();
-        ctx.moveTo(width * 0.15, 0);
-        ctx.lineTo(width * 0.85, 0);
-        ctx.lineTo(width, height);
-        ctx.lineTo(0, height);
-        ctx.fill();
-
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.7)";
-        ctx.lineWidth = 4;
-        let lineOffset = (distance * 40) % 150;
-        
-        for(let i = -150; i < height; i += 150) {
-            let y = i + lineOffset;
-            
-            ctx.beginPath();
-            let x1 = width * 0.5 - (y / height) * (width * 0.42);
-            ctx.moveTo(x1, y);
-            ctx.lineTo(x1, y + 60);
-            ctx.stroke();
-
-            ctx.beginPath();
-            let x2 = width * 0.5 + (y / height) * (width * 0.42);
-            ctx.moveTo(x2, y);
-            ctx.lineTo(x2, y + 60);
-            ctx.stroke();
-        }
-
-        if (selectedEventKey === 'HURDLES' && (state === 'PLAY' || state === 'START_LIGHT')) {
-            hurdles.forEach(h => {
-                let distAhead = h.pos - distance;
-                if (distAhead >= -2 && distAhead < 35) {
-                    let hurdleY = height * 0.7 - (distAhead * 18);
-                    let hurdleScale = Math.max(0.2, 1 - (distAhead / 35));
-                    
-                    if (hurdleY > 0 && hurdleY < height) {
-                        ctx.fillStyle = "#FFFFFF";
-                        let hWidth = 80 * hurdleScale;
-                        let hHeight = 12 * hurdleScale;
-                        ctx.fillRect(width/2 - hWidth/2, hurdleY, hWidth, hHeight);
-                        ctx.fillRect(width/2 - hWidth/2, hurdleY, 4 * hurdleScale, 25 * hurdleScale);
-                        ctx.fillRect(width/2 + hWidth/2 - 4 * hurdleScale, hurdleY, 4 * hurdleScale, 25 * hurdleScale);
-                    }
-                }
-            });
-        }
-
-        if (state === 'TITLE') {
-            ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-            ctx.fillRect(0, 0, width, height);
-            
-            let titleSize = Math.min(width / 14, 40);
-            drawText("8-BIT TRACK", width/2, height * 0.4, titleSize, "#FFD700");
-            
-            if (Math.floor(Date.now() / 500) % 2 === 0) {
-                drawText("TAP TO START", width/2, height * 0.65, 16, "#FFFFFF");
-            }
-        } 
-        
-        else if (state === 'MENU') {
-            ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
-            ctx.fillRect(0, 0, width, height);
-            
-            drawText("GAME HUB", width/2, height * 0.15, 24, "#FFD700");
-            
-            ctx.fillStyle = "#222";
-            ctx.fillRect(width * 0.1, height * 0.32, width * 0.8, 70);
-            ctx.strokeStyle = "#00FF00";
-            ctx.lineWidth = 3;
-            ctx.strokeRect(width * 0.1, height * 0.32, width * 0.8, 70);
-            drawText("Single Event", width/2, height * 0.32 + 42, 16, "#00FF00");
-
-            ctx.fillStyle = "#222";
-            ctx.fillRect(width * 0.1, height * 0.48, width * 0.8, 70);
-            ctx.strokeStyle = "#FF9900";
-            ctx.lineWidth = 3;
-            ctx.strokeRect(width * 0.1, height * 0.48, width * 0.8, 70);
-            drawText("Track Meet", width/2, height * 0.48 + 42, 16, "#FF9900");
-
-            ctx.fillStyle = "#222";
-            ctx.fillRect(width * 0.1, height * 0.64, width * 0.8, 70);
-            ctx.strokeStyle = "#00FFFF";
-            ctx.lineWidth = 3;
-            ctx.strokeRect(width * 0.1, height * 0.64, width * 0.8, 70);
-            drawText("Leaderboards", width/2, height * 0.64 + 42, 16, "#00FFFF");
-        }
-
-        else if (state === 'EVENT_SELECT') {
-            ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
-            ctx.fillRect(0, 0, width, height);
-            
-            drawText("SELECT EVENT", width/2, height * 0.15, 22, "#FFFFFF");
-            
-            ctx.fillStyle = "#222";
-            ctx.fillRect(width * 0.1, height * 0.30, width * 0.8, 80);
-            ctx.strokeStyle = "#00FF00";
-            ctx.lineWidth = 3;
-            ctx.strokeRect(width * 0.1, height * 0.30, width * 0.8, 80);
-            drawText("100m Dash", width/2, height * 0.30 + 48, 16, "#00FF00");
-
-            ctx.fillStyle = "#222";
-            ctx.fillRect(width * 0.1, height * 0.50, width * 0.8, 80);
-            ctx.strokeStyle = "#33CCFF";
-            ctx.lineWidth = 3;
-            ctx.strokeRect(width * 0.1, height * 0.50, width * 0.8, 80);
-            drawText("110m Hurdles", width/2, height * 0.50 + 48, 16, "#33CCFF");
-
-            drawText("< Back to Menu", width/2, height * 0.9, 12, "#AAAAAA");
-        }
-
-        else if (state === 'EVENT_DETAIL') {
-            ctx.fillStyle = "rgba(0, 0, 0, 0.9)";
-            ctx.fillRect(0, 0, width, height);
-
-            let eventName = selectedEventKey === '100M' ? '100m Dash' : '110m Hurdles';
-            drawText(eventName, width/2, height * 0.15, 20, "#FFD700");
-            drawText("TOP 3 RECORDS", width/2, height * 0.25, 12, "#AAAAAA");
-
-            let lb = leaderboards[selectedEventKey];
-            for (let i = 0; i < 3; i++) {
-                let rankColor = i === 0 ? "#FFD700" : (i === 1 ? "#C0C0C0" : "#CD7F32");
-                let entry = lb[i] || { name: "---", time: 0 };
-                let rowY = height * 0.34 + (i * 40);
-                drawText(`#${i+1}  ${entry.name}`, width * 0.35, rowY, 12, rankColor, "left");
-                drawText(`${entry.time > 0 ? entry.time.toFixed(2) + 's' : '--.--'}`, width * 0.75, rowY, 12, "#FFF", "right");
-            }
-
-            ctx.fillStyle = "#00AA00";
-            ctx.fillRect(width * 0.15, height * 0.72, width * 0.7, 60);
-            ctx.strokeStyle = "#00FF00";
-            ctx.lineWidth = 3;
-            ctx.strokeRect(width * 0.15, height * 0.72, width * 0.7, 60);
-            drawText("PLAY EVENT", width/2, height * 0.72 + 38, 16, "#FFF");
-
-            drawText("< Back", width * 0.25, height * 0.9, 12, "#AAAAAA");
-        }
-
-        else if (state === 'LEADERBOARD') {
-            ctx.fillStyle = "rgba(0, 0, 0, 0.9)";
-            ctx.fillRect(0, 0, width, height);
-
-            drawText("LEADERBOARDS", width/2, height * 0.08, 16, "#00FFFF");
-
-            // REFINED: Scaled tabs perfectly so 3 buttons fit side-by-side
-            let tabWidth = width * 0.28;
-            let tab1Active = leaderboardViewKey === '100M';
-            ctx.fillStyle = tab1Active ? "#00FF00" : "#333";
-            ctx.fillRect(width * 0.05, height * 0.15, tabWidth, 30);
-            drawText("100m", width * 0.19, height * 0.15 + 20, 9, tab1Active ? "#000" : "#FFF");
-
-            let tab2Active = leaderboardViewKey === 'HURDLES';
-            ctx.fillStyle = tab2Active ? "#33CCFF" : "#333";
-            ctx.fillRect(width * 0.36, height * 0.15, tabWidth, 30);
-            drawText("Hurdles", width * 0.50, height * 0.15 + 20, 8, tab2Active ? "#000" : "#FFF");
-
-            let tab3Active = leaderboardViewKey === 'MEET';
-            ctx.fillStyle = tab3Active ? "#FF9900" : "#333";
-            ctx.fillRect(width * 0.67, height * 0.15, tabWidth, 30);
-            drawText("Meet", width * 0.81, height * 0.15 + 20, 9, tab3Active ? "#000" : "#FFF");
-
-            drawText("RANK  PLAYER        TIME", width/2, height * 0.25, 10, "#888888");
-
-            let lb = leaderboards[leaderboardViewKey];
-            for (let i = 0; i < Math.min(lb.length, 10); i++) {
-                let entry = lb[i];
-                let rowY = height * 0.31 + (i * 32);
-                let rankStr = `#${i+1}`.padEnd(4, ' ');
-                let nameStr = entry.name.padEnd(10, ' ');
-                let timeStr = `${entry.time.toFixed(2)}s`;
-                
-                // Highlight user scores in Cyan
-                let textColor = (entry.name !== "BLT" && entry.name !== "GAL" && entry.name !== "GLD" && entry.time > 0 && entry.time < 35) ? "#00FFFF" : "#FFFFFF";
-                drawText(`${rankStr}  ${nameStr}  ${timeStr}`, width/2, rowY, 10, textColor);
-            }
-
-            drawText("< Back to Menu", width/2, height * 0.92, 12, "#AAAAAA");
-        }
-
-        else if (state === 'TRACK_MEET_INTRO') {
-            ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
-            ctx.fillRect(0, 0, width, height);
-
-            drawText("TRACK MEET CHALLENGE", width/2, height * 0.3, 14, "#FF9900");
-            let eventName = selectedEventKey === '100M' ? 'Event 1: 100m Dash' : 'Event 2: 110m Hurdles';
-            drawText(`UP NEXT:`, width/2, height * 0.45, 12, "#FFF");
-            drawText(eventName, width/2, height * 0.53, 16, "#00FF00");
-
-            if (Math.floor(Date.now() / 500) % 2 === 0) {
-                drawText("TAP ANYWHERE TO START", width/2, height * 0.75, 12, "#AAAAAA");
-            }
-        }
-
-        else if (state === 'START_LIGHT') {
-            draw8BitPlayer(width / 2, height * 0.7);
-
-            ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
-            ctx.fillRect(0, 0, width, height);
-
-            if (lightState === 0) {
-                drawText("ON YOUR MARKS", width/2, height * 0.4, 20, "#FFA500");
-            } else if (lightState === 1) {
-                drawText("GET SET", width/2, height * 0.4, 24, "#FFFF00");
-            } else if (lightState === 2) {
-                drawText("GO!", width/2, height * 0.4, 40, "#00FF00");
-            } else if (lightState === 3) {
-                drawText("FALSE START!", width/2, height * 0.4, 20, "#FF0000");
-                drawText("Wait for GO!", width/2, height * 0.5, 14, "#FFFFFF");
-            }
-        }
-        
-        else if (state === 'PLAY') {
-            draw8BitPlayer(width / 2, height * 0.7);
-
-            drawText(`DIST: ${Math.floor(distance)}m / ${maxDistance}m`, 15, 30, 12, "#FFF", "left");
-            drawText(`TIME: ${time.toFixed(2)}s`, 15, 60, 12, "#FFF", "left");
-            if (isTrackMeet) {
-                drawText(`MEET EVENT ${trackMeetIndex+1}/2`, width - 15, 30, 10, "#FF9900", "right");
-            }
-
-            if (stumbleTimer > 0) {
-                drawText("STUMBLED!", width/2, height * 0.35, 18, "#FF0000");
-            }
-
-            ctx.fillStyle = "#333";
-            let barWidth = Math.min(width * 0.4, 200);
-            ctx.fillRect(width/2 - barWidth/2, 20, barWidth, 15);
-            
-            ctx.fillStyle = speed > 10 ? "#FF0000" : "#00FF00";
-            ctx.fillRect(width/2 - barWidth/2, 20, (speed / 11.5) * barWidth, 15);
-            ctx.strokeStyle = "#FFF";
-            ctx.strokeRect(width/2 - barWidth/2, 20, barWidth, 15);
-
-            if (speed < 1 && distance < 5) {
-                drawText("ALT TAP TO RUN", width/2, height * 0.42, 12, "rgba(255, 255, 0, 0.9)");
-                if (selectedEventKey === 'HURDLES') {
-                    drawText("PRESS BOTH THUMBS TO JUMP!", width/2, height * 0.47, 11, "rgba(51, 204, 255, 0.9)");
-                }
-            }
-        } 
-        
-        else if (state === 'GAMEOVER') {
-            draw8BitPlayer(width / 2, height * 0.7); 
-            
-            ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
-            ctx.fillRect(0, 0, width, height);
-            
-            drawText("EVENT FINISHED!", width/2, height * 0.3, 22, "#00FF00");
-            drawText(`Time: ${time.toFixed(2)}s`, width/2, height * 0.44, 22, "#FFD700");
-            
-            if (gameOverDelay <= 0) {
-                let promptText = isTrackMeet ? "Tap to continue Track Meet" : "Tap to return to Menu";
-                drawText(promptText, width/2, height * 0.8, 12, "#AAAAAA");
-            }
-        }
-
-        else if (state === 'TRACK_MEET_SUMMARY') {
-            ctx.fillStyle = "rgba(0, 0, 0, 0.9)";
-            ctx.fillRect(0, 0, width, height);
-
-            drawText("TRACK MEET COMPLETE!", width/2, height * 0.25, 16, "#FF9900");
-            drawText("TOTAL CUMULATIVE TIME:", width/2, height * 0.4, 12, "#FFF");
-            drawText(`${trackMeetTotalTime.toFixed(2)}s`, width/2, height * 0.5, 30, "#FFD700");
-
-            drawText("Tap to return to Menu", width/2, height * 0.8, 12, "#AAAAAA");
-        }
-
-        ctx.restore();
-    }
-
-    requestAnimationFrame(loop);
-</script>
-</body>
-</html>
+        ctx.fillStyle = color; ctx.font = `${size}px 'Press Start 2P', monospace`;
+        ctx.textAlign = align; ctx.fillText(text, x,
