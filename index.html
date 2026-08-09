@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>8-Bit Track & Field</title>
+    <title>8-Bit Track & Field - Mobile Game Hub</title>
     <style>
         * {
             box-sizing: border-box;
@@ -39,7 +39,7 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
 
-        // Handle high-DPI screens for crisp mobile rendering
+        // Handle high-DPI screens and mobile proportional scaling
         function resizeCanvas() {
             const scale = Math.min(window.innerWidth / 480, window.innerHeight / 320);
             canvas.style.width = (480 * scale) + 'px';
@@ -48,99 +48,193 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // Game States: 'MENU', 'PLAYING', 'GAMEOVER'
-        let gameState = 'MENU';
+        // Game States: 'TITLE', 'MENU', 'PLAYING', 'GAMEOVER'
+        let gameState = 'TITLE';
         let currentEvent = '100m';
+        let menuSelection = 0;
 
-        // Player Stats
+        const gameModes = [
+            { id: '100m', name: '100M DASH', target: 100 },
+            { id: 'longjump', name: 'LONG JUMP', target: 80 },
+            { id: 'javelin', name: 'JAVELIN', target: 90 }
+        ];
+
+        // Player State
         let player = {
             x: 50,
             y: 220,
             speed: 0,
-            maxSpeed: 10,
+            maxSpeed: 12,
             distance: 0,
             targetDistance: 100
         };
 
-        // Input tracking for alternating touch
         let lastTouchSide = null;
 
-        function handleTouch(xCoord) {
-            if (gameState !== 'PLAYING') return;
-            
-            const screenMid = canvas.clientWidth / 2;
-            const side = xCoord < screenMid ? 'left' : 'right';
+        function resetGame(eventMode) {
+            currentEvent = eventMode.id;
+            player.distance = 0;
+            player.speed = 0;
+            player.targetDistance = eventMode.target;
+            player.x = 50;
+            lastTouchSide = null;
+            gameState = 'PLAYING';
+        }
 
-            // Require alternating sides
-            if (side !== lastTouchSide) {
-                player.speed += 1.2;
-                if (player.speed > player.maxSpeed) player.speed = player.maxSpeed;
-                lastTouchSide = side;
+        // --- INPUT HANDLING ---
+        function handleTouchStart(xCoord) {
+            if (gameState === 'TITLE') {
+                gameState = 'MENU';
+                return;
+            }
+            if (gameState === 'MENU') {
+                // Touch top/middle/bottom or left/right to navigate menu
+                const screenMid = canvas.clientWidth / 2;
+                if (xCoord < screenMid) {
+                    menuSelection = (menuSelection - 1 + gameModes.length) % gameModes.length;
+                } else {
+                    menuSelection = (menuSelection + 1) % gameModes.length;
+                }
+                return;
+            }
+            if (gameState === 'PLAYING') {
+                const screenMid = canvas.clientWidth / 2;
+                const side = xCoord < screenMid ? 'left' : 'right';
+
+                // Alternating thumb requirement for speed
+                if (side !== lastTouchSide) {
+                    player.speed += 1.4;
+                    if (player.speed > player.maxSpeed) player.speed = player.maxSpeed;
+                    lastTouchSide = side;
+                }
+            }
+            if (gameState === 'GAMEOVER') {
+                gameState = 'MENU';
             }
         }
 
-        // Event Listeners with mobile optimization
+        // Event Listeners with multi-touch & mobile optimization
         canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
             for (let i = 0; i < e.changedTouches.length; i++) {
                 const rect = canvas.getBoundingClientRect();
                 const touchX = e.changedTouches[i].clientX - rect.left;
-                
-                if (gameState === 'MENU') {
-                    // Simple click to start for mobile testing
-                    gameState = 'PLAYING';
-                } else {
-                    handleTouch(touchX);
-                }
+                handleTouchStart(touchX);
             }
         }, { passive: false });
 
         canvas.addEventListener('click', (e) => {
-            if (gameState === 'MENU') {
-                gameState = 'PLAYING';
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            handleTouchStart(clickX);
+        });
+
+        // Keyboard controls fallback for desktop testing
+        window.addEventListener('keydown', (e) => {
+            if (gameState === 'TITLE') {
+                gameState = 'MENU';
+            } else if (gameState === 'MENU') {
+                if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+                    menuSelection = (menuSelection - 1 + gameModes.length) % gameModes.length;
+                } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+                    menuSelection = (menuSelection + 1) % gameModes.length;
+                } else if (e.key === 'Enter' || e.key === ' ') {
+                    resetGame(gameModes[menuSelection]);
+                }
+            } else if (gameState === 'PLAYING') {
+                if (e.key === 'a' || e.key === 'ArrowLeft') {
+                    if (lastTouchSide !== 'left') {
+                        player.speed += 1.4;
+                        if (player.speed > player.maxSpeed) player.speed = player.maxSpeed;
+                        lastTouchSide = 'left';
+                    }
+                } else if (e.key === 'd' || e.key === 'ArrowRight') {
+                    if (lastTouchSide !== 'right') {
+                        player.speed += 1.4;
+                        if (player.speed > player.maxSpeed) player.speed = player.maxSpeed;
+                        lastTouchSide = 'right';
+                    }
+                }
+            } else if (gameState === 'GAMEOVER') {
+                gameState = 'MENU';
             }
         });
 
         window.addEventListener('contextmenu', e => e.preventDefault());
 
-        // Game Loop
+        // --- GAME LOOP ---
         function update() {
             if (gameState === 'PLAYING') {
-                // Friction decay
-                player.speed *= 0.95;
+                player.speed *= 0.94; // Friction
                 player.distance += player.speed * 0.05;
 
                 if (player.distance >= player.targetDistance) {
+                    player.distance = player.targetDistance;
                     gameState = 'GAMEOVER';
                 }
             }
         }
 
         function draw() {
-            // Clear screen
-            ctx.fillStyle = '#3388ff'; // Sky
-            ctx.fillRect(0, 0, canvas.0Width || 480, 320);
+            // Clear screen background
+            ctx.fillStyle = '#3388ff';
+            ctx.fillRect(0, 0, 480, 320);
 
-            if (gameState === 'MENU') {
+            if (gameState === 'TITLE') {
                 ctx.fillStyle = '#111';
                 ctx.fillRect(0, 0, 480, 320);
 
                 ctx.fillStyle = '#ffcc00';
-                ctx.font = '24px "Courier New", monospace';
+                ctx.font = '22px "Courier New", monospace';
                 ctx.textAlign = 'center';
-                ctx.fillText('8-BIT TRACK', 240, 100);
+                ctx.fillText('8-BIT TRACK & FIELD', 240, 100);
+
+                ctx.fillStyle = '#00ffcc';
+                ctx.font = '12px "Courier New", monospace';
+                ctx.fillText('ICED ETHER GAME HUB EDITION', 240, 130);
 
                 ctx.fillStyle = '#ffffff';
                 ctx.font = '14px "Courier New", monospace';
-                ctx.fillText('TAP SCREEN TO START', 240, 180);
-                ctx.fillText('MOBILE GAME HUB EDITION', 240, 220);
+                ctx.fillText('TAP OR CLICK ANYWHERE TO START', 240, 210);
             } 
+            else if (gameState === 'MENU') {
+                ctx.fillStyle = '#111';
+                ctx.fillRect(0, 0, 480, 320);
+
+                ctx.fillStyle = '#ffcc00';
+                ctx.font = '20px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('SELECT GAME MODE', 240, 60);
+
+                ctx.fillStyle = '#888';
+                ctx.font = '11px "Courier New", monospace';
+                ctx.fillText('(Tap Left/Right sides to change, Center/Click to select)', 240, 85);
+
+                gameModes.forEach((mode, index) => {
+                    let y = 140 + (index * 45);
+                    if (index === menuSelection) {
+                        ctx.fillStyle = '#ff3333';
+                        ctx.fillRect(100, y - 22, 280, 34);
+                        ctx.strokeStyle = '#ffffff';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(100, y - 22, 280, 34);
+                        ctx.fillStyle = '#ffffff';
+                    } else {
+                        ctx.fillStyle = '#444';
+                        ctx.fillRect(100, y - 22, 280, 34);
+                        ctx.fillStyle = '#aaaaaa';
+                    }
+                    ctx.font = '16px "Courier New", monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(mode.name, 240, y);
+                });
+            }
             else if (gameState === 'PLAYING' || gameState === 'GAMEOVER') {
-                // Track Grass
+                // Grass Background
                 ctx.fillStyle = '#228833';
                 ctx.fillRect(0, 180, 480, 140);
 
-                // Track Lines
+                // Track Lanes
                 ctx.strokeStyle = '#ffffff';
                 ctx.lineWidth = 2;
                 ctx.beginPath();
@@ -149,28 +243,29 @@
                 ctx.moveTo(0, 290); ctx.lineTo(480, 290);
                 ctx.stroke();
 
-                // Draw Runner (Retro Block Style)
+                // Runner Block
                 ctx.fillStyle = '#ff3333';
                 let runnerX = 60 + (player.distance / player.targetDistance) * 350;
                 ctx.fillRect(runnerX, 225, 16, 24);
 
-                // HUD / Stats
+                // HUD
                 ctx.fillStyle = '#ffffff';
                 ctx.font = '12px "Courier New", monospace';
                 ctx.textAlign = 'left';
-                ctx.fillText(`SPEED: ${(player.speed * 10).toFixed(0)} KM/H`, 20, 30);
-                ctx.fillText(`DIST: ${player.distance.toFixed(1)} / ${player.targetDistance}M`, 20, 50);
+                ctx.fillText(`EVENT: ${currentEvent.toUpperCase()}`, 20, 30);
+                ctx.fillText(`SPEED: ${(player.speed * 10).toFixed(0)} KM/H`, 20, 50);
+                ctx.fillText(`DIST: ${player.distance.toFixed(1)} / ${player.targetDistance}M`, 20, 70);
 
                 if (gameState === 'GAMEOVER') {
-                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.fillStyle = 'rgba(0,0,0,0.75)';
                     ctx.fillRect(0, 0, 480, 320);
                     ctx.fillStyle = '#00ffcc';
                     ctx.font = '20px "Courier New", monospace';
                     ctx.textAlign = 'center';
-                    ctx.fillText('FINISH!', 240, 150);
+                    ctx.fillText('EVENT FINISHED!', 240, 140);
                     ctx.fillStyle = '#ffffff';
-                    ctx.font = '12px "Courier New", monospace';
-                    ctx.fillText('TAP TO RESTART', 240, 190);
+                    ctx.font = '13px "Courier New", monospace';
+                    ctx.fillText('TAP ANYWHERE TO RETURN TO MENU', 240, 190);
                 }
             }
         }
@@ -181,7 +276,6 @@
             requestAnimationFrame(loop);
         }
 
-        // Initialize loop once window loads
         window.onload = () => {
             loop();
         };
