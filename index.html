@@ -5,396 +5,186 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>8-Bit Track & Field</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
-        
-        body, html {
-            margin: 0; padding: 0; width: 100%; height: 100%;
-            background-color: #222; overflow: hidden; touch-action: none; 
-            font-family: 'Press Start 2P', monospace; color: white;
-            user-select: none; -webkit-user-select: none;
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
         }
-        canvas { display: block; width: 100%; height: 100%; }
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #111;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            background-color: #222;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
     </style>
 </head>
 <body>
 
-<canvas id="gameCanvas"></canvas>
+    <canvas id="gameCanvas" width="480" height="320"></canvas>
 
-<script>
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    let width = window.innerWidth, height = window.innerHeight;
-    canvas.width = width; canvas.height = height;
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
 
-    window.addEventListener('resize', () => {
-        width = window.innerWidth; height = window.innerHeight;
-        canvas.width = width; canvas.height = height;
-    });
-
-    // --- GAME CONFIG & DATA ---
-    const EVENTS = {
-        '100M': { name: '100m Dash', maxDist: 100, isTime: true, color: '#00FF00' },
-        'HURDLES': { name: '110m Hurdles', maxDist: 110, isTime: true, color: '#33CCFF' },
-        '400M': { name: '400m Dash', maxDist: 400, isTime: true, color: '#FF33FF' },
-        'LONG_JUMP': { name: 'Long Jump', maxDist: 40, isTime: false, color: '#FFCC00' },
-        'JAVELIN': { name: 'Javelin', maxDist: 40, isTime: false, color: '#FF6600' }
-    };
-
-    let state = 'TITLE'; 
-    let selectedEventKey = '100M'; 
-    let leaderboardViewKey = '100M'; 
-
-    let isTrackMeet = false;
-    let trackMeetQueue = ['100M', 'HURDLES', '400M']; // Running events only for cumulative time
-    let trackMeetIndex = 0;
-    let trackMeetTotalTime = 0;
-
-    let speed = 0, distance = 0, time = 0, gameOverDelay = 0;
-    let lastSwipeSide = null;
-
-    // Hurdles Variables
-    let hurdles = [];
-    let isJumping = false, jumpHeight = 0, stumbleTimer = 0;
-
-    // 400m Variables
-    let stamina = 100;
-
-    // Long Jump / Javelin Variables
-    let isChargingJump = false, jumpCharge = 0;
-    let javelinThrown = false, javelinFinalDist = 0, javelinAnimCounter = 0;
-    let flightSpeed = 0, jumpStartDist = 0;
-    let swipeStartX = 0, swipeStartY = 0, swipeStartTime = 0;
-
-    let lightTimer = 0, lightState = 0; 
-
-    // --- LEADERBOARDS ---
-    function getMockLB(isTime) {
-        let arr = [];
-        for(let i=0; i<10; i++) {
-            arr.push({ name: ["BLT","GAL","FRO","ZRO","APX","NOB","SKY","TRK","GRD","RUN"][i], 
-                       score: isTime ? 10 + (i*1.5) : 80 - (i*5) });
+        // Handle high-DPI screens for crisp mobile rendering
+        function resizeCanvas() {
+            const scale = Math.min(window.innerWidth / 480, window.innerHeight / 320);
+            canvas.style.width = (480 * scale) + 'px';
+            canvas.style.height = (320 * scale) + 'px';
         }
-        return arr;
-    }
-    
-    let leaderboards = {
-        '100M': JSON.parse(localStorage.getItem('lb_100M')) || getMockLB(true),
-        'HURDLES': JSON.parse(localStorage.getItem('lb_HURDLES')) || getMockLB(true),
-        '400M': JSON.parse(localStorage.getItem('lb_400M')) || getMockLB(true),
-        'LONG_JUMP': JSON.parse(localStorage.getItem('lb_LONG_JUMP')) || getMockLB(false).map(e => ({name: e.name, score: e.score/10})),
-        'JAVELIN': JSON.parse(localStorage.getItem('lb_JAVELIN')) || getMockLB(false),
-        'MEET': JSON.parse(localStorage.getItem('lb_MEET')) || getMockLB(true).map(e => ({name: e.name, score: e.score*3}))
-    };
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
 
-    function formatScore(score, eKey) {
-        if (score <= 0) return "FOUL";
-        return (eKey === 'MEET' || EVENTS[eKey].isTime) ? score.toFixed(2) + 's' : score.toFixed(2) + 'm';
-    }
+        // Game States: 'MENU', 'PLAYING', 'GAMEOVER'
+        let gameState = 'MENU';
+        let currentEvent = '100m';
 
-    // --- INPUT HANDLING ---
-    function handleTouchStart(x, y, touchesLength) {
-        swipeStartX = x; swipeStartY = y; swipeStartTime = performance.now();
+        // Player Stats
+        let player = {
+            x: 50,
+            y: 220,
+            speed: 0,
+            maxSpeed: 10,
+            distance: 0,
+            targetDistance: 100
+        };
 
-        if (state === 'PLAY' && selectedEventKey === 'LONG_JUMP' && touchesLength >= 2) {
-            isChargingJump = true; jumpCharge = 0; return;
-        }
-        if (state === 'PLAY' && selectedEventKey === 'HURDLES' && touchesLength >= 2) {
-            if (!isJumping && stumbleTimer <= 0) { isJumping = true; jumpHeight = 1.0; }
-            return;
-        }
-        processInput(x, y);
-    }
+        // Input tracking for alternating touch
+        let lastTouchSide = null;
 
-    function handleTouchEnd(x, y, touchesLength) {
-        if (state === 'PLAY' && selectedEventKey === 'JAVELIN' && !javelinThrown) {
-            let dt = performance.now() - swipeStartTime;
-            if (dt < 500 && (swipeStartY - y) > 40) {
-                executeJavelinThrow(swipeStartX, swipeStartY, x, y);
-            }
-        }
-        if (state === 'PLAY' && selectedEventKey === 'LONG_JUMP' && isChargingJump && touchesLength < 2) {
-            executeJump();
-        }
-    }
-
-    canvas.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        handleTouchStart(e.touches[0].clientX, e.touches[0].clientY, e.touches.length);
-    }, {passive: false});
-
-    canvas.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        let x = e.changedTouches[0].clientX, y = e.changedTouches[0].clientY;
-        handleTouchEnd(x, y, e.touches.length);
-    });
-
-    canvas.addEventListener('mousedown', (e) => handleTouchStart(e.clientX, e.clientY, 1));
-    canvas.addEventListener('mouseup', (e) => handleTouchEnd(e.clientX, e.clientY, 0));
-
-    window.addEventListener('keydown', (e) => {
-        if (e.code === 'Space') {
-            if (state === 'PLAY' && selectedEventKey === 'HURDLES' && !isJumping && stumbleTimer <= 0) {
-                isJumping = true; jumpHeight = 1.0;
-            }
-            if (state === 'PLAY' && selectedEventKey === 'LONG_JUMP' && !isChargingJump) {
-                isChargingJump = true; jumpCharge = 0;
-            }
-        }
-    });
-    window.addEventListener('keyup', (e) => {
-        if (e.code === 'Space' && state === 'PLAY' && selectedEventKey === 'LONG_JUMP' && isChargingJump) {
-            executeJump();
-        }
-    });
-
-    function processInput(x, y) {
-        if (state === 'TITLE') { state = 'MENU'; return; }
-        
-        if (state === 'MENU') {
-            if (y > height * 0.32 && y < height * 0.44) { state = 'EVENT_SELECT'; return; }
-            if (y > height * 0.48 && y < height * 0.60) { startTrackMeet(); return; }
-            if (y > height * 0.64 && y < height * 0.76) { state = 'LEADERBOARD'; leaderboardViewKey = '100M'; return; }
-            return;
-        }
-
-        if (state === 'EVENT_SELECT') {
-            if (y > height * 0.88) { state = 'MENU'; return; }
-            let keys = Object.keys(EVENTS);
-            for(let i=0; i<keys.length; i++) {
-                let btnY = height * 0.20 + (i * height * 0.13);
-                if (y > btnY && y < btnY + (height * 0.10)) {
-                    selectedEventKey = keys[i]; state = 'EVENT_DETAIL'; return;
-                }
-            }
-            return;
-        }
-
-        if (state === 'EVENT_DETAIL') {
-            if (y > height * 0.85 && x < width / 2) { state = 'EVENT_SELECT'; return; }
-            if (y > height * 0.72 && y < height * 0.83) { isTrackMeet = false; startCountdownSequence(); return; }
-            return;
-        }
-
-        if (state === 'LEADERBOARD') {
-            if (y > height * 0.88) { state = 'MENU'; return; }
+        function handleTouch(xCoord) {
+            if (gameState !== 'PLAYING') return;
             
-            // 2 Rows of 3 Tabs
-            let isTopRow = y > height * 0.12 && y < height * 0.18;
-            let isBotRow = y > height * 0.20 && y < height * 0.26;
-            
-            if (isTopRow || isBotRow) {
-                let col = x < width * 0.33 ? 0 : (x < width * 0.66 ? 1 : 2);
-                if (isTopRow && col === 0) leaderboardViewKey = '100M';
-                if (isTopRow && col === 1) leaderboardViewKey = 'HURDLES';
-                if (isTopRow && col === 2) leaderboardViewKey = '400M';
-                if (isBotRow && col === 0) leaderboardViewKey = 'LONG_JUMP';
-                if (isBotRow && col === 1) leaderboardViewKey = 'JAVELIN';
-                if (isBotRow && col === 2) leaderboardViewKey = 'MEET';
-            }
-            return;
-        }
+            const screenMid = canvas.clientWidth / 2;
+            const side = xCoord < screenMid ? 'left' : 'right';
 
-        if (state === 'TRACK_MEET_INTRO') { startCountdownSequence(); return; }
-        
-        if (state === 'START_LIGHT') {
-            if (lightState < 2) { lightState = 3; lightTimer = 1.5; }
-            return;
-        }
-        
-        if (state === 'GAMEOVER' && gameOverDelay <= 0) {
-            if (isTrackMeet) advanceTrackMeet(); else state = 'MENU';
-            return;
-        }
-        if (state === 'TRACK_MEET_SUMMARY') { state = 'MENU'; return; }
-
-        if (state === 'PLAY') {
-            if (stumbleTimer <= 0) {
-                let side = x < width / 2 ? 'LEFT' : 'RIGHT';
-                if (side !== lastSwipeSide) {
-                    if (stamina > 0 || selectedEventKey !== '400M') {
-                        speed += 1.3; 
-                        if (speed > 11.5) speed = 11.5; 
-                    } else {
-                        speed += 0.5; // Bonked speed gain
-                        if (speed > 4.0) speed = 4.0;
-                    }
-                    lastSwipeSide = side;
-                }
-            }
-        }
-    }
-
-    // --- GAME LOGIC EXECUTION ---
-    function executeJump() {
-        isChargingJump = false; isJumping = true; state = 'PLAY_FLIGHT';
-        let chargeDiff = Math.abs(0.4 - jumpCharge); 
-        let chargeMultiplier = Math.max(0, 1 - (chargeDiff * 1.5)); 
-        flightSpeed = Math.max(2, speed);
-        jumpHeight = 1.2; 
-        jumpStartDist = distance;
-        javelinFinalDist = (flightSpeed * 0.45) + (flightSpeed * 0.45 * chargeMultiplier); 
-    }
-
-    function executeJavelinThrow(sx, sy, ex, ey) {
-        javelinThrown = true; state = 'PLAY_FLIGHT';
-        let dy = sy - ey, dx = ex - sx; 
-        let angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
-        let diff = Math.abs(45 - angleDeg);
-        let angleEfficiency = Math.max(0.1, 1 - (diff / 70)); 
-        javelinFinalDist = (speed * 7.5) * angleEfficiency; 
-        javelinAnimCounter = 0;
-    }
-
-    function startTrackMeet() {
-        isTrackMeet = true; trackMeetIndex = 0; trackMeetTotalTime = 0;
-        selectedEventKey = trackMeetQueue[trackMeetIndex]; state = 'TRACK_MEET_INTRO';
-    }
-
-    function advanceTrackMeet() {
-        trackMeetIndex++;
-        if (trackMeetIndex < trackMeetQueue.length) {
-            selectedEventKey = trackMeetQueue[trackMeetIndex]; state = 'TRACK_MEET_INTRO';
-        } else {
-            state = 'TRACK_MEET_SUMMARY'; submitScoreToLeaderboard('MEET', trackMeetTotalTime);
-        }
-    }
-
-    function startCountdownSequence() {
-        speed = distance = time = jumpHeight = stumbleTimer = jumpCharge = 0;
-        stamina = 100;
-        lastSwipeSide = null; gameOverDelay = 0;
-        isJumping = isChargingJump = javelinThrown = false;
-        
-        hurdles = [];
-        if (selectedEventKey === 'HURDLES') {
-            for (let d = 18; d < 105; d += 18) hurdles.push({ pos: d, cleared: false });
-        }
-        
-        state = 'START_LIGHT'; lightState = 0; lightTimer = 1.0; 
-    }
-
-    let lastTime = performance.now();
-    function loop(currentTime) {
-        let dt = (currentTime - lastTime) / 1000;
-        lastTime = currentTime;
-        if (dt > 0.1) dt = 0.1;
-        update(dt); draw(); requestAnimationFrame(loop);
-    }
-
-    function update(dt) {
-        if (state === 'START_LIGHT') {
-            lightTimer -= dt;
-            if (lightTimer <= 0) {
-                if (lightState === 0) { lightState = 1; lightTimer = 1.0; }
-                else if (lightState === 1) { lightState = 2; lightTimer = 0.4; }
-                else if (lightState === 2) { state = 'PLAY'; }
-                else if (lightState === 3) { state = isTrackMeet ? 'TRACK_MEET_INTRO' : 'MENU'; }
+            // Require alternating sides
+            if (side !== lastTouchSide) {
+                player.speed += 1.2;
+                if (player.speed > player.maxSpeed) player.speed = player.maxSpeed;
+                lastTouchSide = side;
             }
         }
 
-        if (state === 'PLAY' || state === 'PLAY_FLIGHT') {
-            if (state === 'PLAY') time += dt;
-
-            // 400m Stamina Mechanics
-            if (selectedEventKey === '400M' && state === 'PLAY') {
-                stamina -= (speed * 0.35) * dt; 
-                if (speed < 6) stamina += (6 - speed) * dt * 2.5;
-                if (stamina < 0) stamina = 0;
-                if (stamina > 100) stamina = 100;
-                if (stamina <= 0 && speed > 4.0) speed -= 15 * dt; // Hard bonk braking
-            }
-
-            // Normal Running Physics
-            if (state === 'PLAY') {
-                if (stumbleTimer > 0) {
-                    stumbleTimer -= dt; speed = Math.min(speed, speed * 0.3); 
-                } else {
-                    speed -= (speed * 0.85) * dt; 
-                    if (speed < 0.01) speed = 0;
-                }
-                distance += speed * dt;
-                if (isChargingJump) jumpCharge += dt;
-            }
-
-            // Hurdles Check
-            if (selectedEventKey === 'HURDLES' && state === 'PLAY') {
-                if (isJumping) {
-                    jumpHeight -= dt * 3.2; 
-                    if (jumpHeight <= 0) { jumpHeight = 0; isJumping = false; }
-                }
-                hurdles.forEach(h => {
-                    if (!h.cleared && Math.abs(distance - h.pos) < 1.5) {
-                        if (jumpHeight > 0.15) h.cleared = true; 
-                        else { stumbleTimer = 0.8; h.cleared = true; }
-                    }
-                });
-            }
-            
-            // Foul Line Checks (Field Events)
-            let isField = selectedEventKey === 'LONG_JUMP' || selectedEventKey === 'JAVELIN';
-            if (isField && state === 'PLAY' && distance >= 40) {
-                distance = 40; state = 'GAMEOVER'; gameOverDelay = 2.0;
-                submitScoreToLeaderboard(selectedEventKey, 0); // FOUL
-            }
-
-            // Flight State Logic
-            if (state === 'PLAY_FLIGHT') {
-                if (selectedEventKey === 'LONG_JUMP') {
-                    distance += flightSpeed * dt;
-                    jumpHeight -= dt * 2.0; 
-                    if (jumpHeight <= 0) {
-                        jumpHeight = 0; state = 'GAMEOVER'; gameOverDelay = 2.0;
-                        let jumpDist = Math.max(0, distance - 40); // Measure from board
-                        submitScoreToLeaderboard('LONG_JUMP', jumpDist);
-                    }
-                } else if (selectedEventKey === 'JAVELIN') {
-                    javelinAnimCounter += dt * 45; 
-                    if (javelinAnimCounter >= javelinFinalDist) {
-                        javelinAnimCounter = javelinFinalDist; state = 'GAMEOVER'; gameOverDelay = 2.0;
-                        submitScoreToLeaderboard('JAVELIN', javelinFinalDist);
-                    }
-                }
-            }
-            
-            // Finish Line (Track Events)
-            if (!isField && distance >= EVENTS[selectedEventKey].maxDist) {
-                distance = EVENTS[selectedEventKey].maxDist; state = 'GAMEOVER'; gameOverDelay = 2.0;
-                if (isTrackMeet) trackMeetTotalTime += time;
-                else submitScoreToLeaderboard(selectedEventKey, time);
-            }
-        }
-        
-        if (state === 'GAMEOVER' && gameOverDelay > 0) gameOverDelay -= dt;
-    }
-
-    function submitScoreToLeaderboard(eventKey, newScore) {
-        setTimeout(() => {
-            let lb = leaderboards[eventKey];
-            let isTime = (eventKey === 'MEET' || EVENTS[eventKey].isTime);
-            let isTop10 = false;
-
-            if (newScore > 0) {
-                if (lb.length < 10) isTop10 = true;
-                else {
-                    let worstScore = lb[lb.length - 1].score;
-                    isTop10 = isTime ? (newScore < worstScore) : (newScore > worstScore);
-                }
-            }
-
-            if (isTop10) {
-                let pName = prompt(`🏆 NEW TOP 10 SCORE! 🏆\nEnter 3 Initials:`, "YOU");
-                pName = pName ? pName.substring(0, 3).toUpperCase() : "YOU";
-                lb.push({ name: pName, score: newScore });
-                lb.sort((a, b) => isTime ? a.score - b.score : b.score - a.score); 
-                if (lb.length > 10) lb.pop(); 
+        // Event Listeners with mobile optimization
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const rect = canvas.getBoundingClientRect();
+                const touchX = e.changedTouches[i].clientX - rect.left;
                 
-                leaderboards[eventKey] = lb;
-                localStorage.setItem(`lb_${eventKey}`, JSON.stringify(lb));
+                if (gameState === 'MENU') {
+                    // Simple click to start for mobile testing
+                    gameState = 'PLAYING';
+                } else {
+                    handleTouch(touchX);
+                }
             }
-        }, 500);
-    }
+        }, { passive: false });
 
-    // --- RENDERING ---
-    function drawText(text, x, y, size, color="white", align="center") {
-        ctx.fillStyle = color; ctx.font = `${size}px 'Press Start 2P', monospace`;
-        ctx.textAlign = align; ctx.fillText(text, x,
+        canvas.addEventListener('click', (e) => {
+            if (gameState === 'MENU') {
+                gameState = 'PLAYING';
+            }
+        });
+
+        window.addEventListener('contextmenu', e => e.preventDefault());
+
+        // Game Loop
+        function update() {
+            if (gameState === 'PLAYING') {
+                // Friction decay
+                player.speed *= 0.95;
+                player.distance += player.speed * 0.05;
+
+                if (player.distance >= player.targetDistance) {
+                    gameState = 'GAMEOVER';
+                }
+            }
+        }
+
+        function draw() {
+            // Clear screen
+            ctx.fillStyle = '#3388ff'; // Sky
+            ctx.fillRect(0, 0, canvas.0Width || 480, 320);
+
+            if (gameState === 'MENU') {
+                ctx.fillStyle = '#111';
+                ctx.fillRect(0, 0, 480, 320);
+
+                ctx.fillStyle = '#ffcc00';
+                ctx.font = '24px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('8-BIT TRACK', 240, 100);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '14px "Courier New", monospace';
+                ctx.fillText('TAP SCREEN TO START', 240, 180);
+                ctx.fillText('MOBILE GAME HUB EDITION', 240, 220);
+            } 
+            else if (gameState === 'PLAYING' || gameState === 'GAMEOVER') {
+                // Track Grass
+                ctx.fillStyle = '#228833';
+                ctx.fillRect(0, 180, 480, 140);
+
+                // Track Lines
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, 210); ctx.lineTo(480, 210);
+                ctx.moveTo(0, 250); ctx.lineTo(480, 250);
+                ctx.moveTo(0, 290); ctx.lineTo(480, 290);
+                ctx.stroke();
+
+                // Draw Runner (Retro Block Style)
+                ctx.fillStyle = '#ff3333';
+                let runnerX = 60 + (player.distance / player.targetDistance) * 350;
+                ctx.fillRect(runnerX, 225, 16, 24);
+
+                // HUD / Stats
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '12px "Courier New", monospace';
+                ctx.textAlign = 'left';
+                ctx.fillText(`SPEED: ${(player.speed * 10).toFixed(0)} KM/H`, 20, 30);
+                ctx.fillText(`DIST: ${player.distance.toFixed(1)} / ${player.targetDistance}M`, 20, 50);
+
+                if (gameState === 'GAMEOVER') {
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.fillRect(0, 0, 480, 320);
+                    ctx.fillStyle = '#00ffcc';
+                    ctx.font = '20px "Courier New", monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('FINISH!', 240, 150);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = '12px "Courier New", monospace';
+                    ctx.fillText('TAP TO RESTART', 240, 190);
+                }
+            }
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        // Initialize loop once window loads
+        window.onload = () => {
+            loop();
+        };
+    </script>
+</body>
+</html>
