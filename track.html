@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>8-Bit Track</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #222;
+            overflow: hidden;
+            touch-action: none; /* Prevents pull-to-refresh and scrolling on mobile */
+            font-family: 'Press Start 2P', monospace;
+            color: white;
+            user-select: none;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+
+    // Handle Resize
+    window.addEventListener('resize', () => {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = width;
+        canvas.height = height;
+    });
+
+    // Game States: TITLE, MENU, PLAY, GAMEOVER
+    let state = 'TITLE'; 
+    
+    // Core Game Variables
+    let speed = 0;
+    let distance = 0;
+    let maxDistance = 100; // 100m dash
+    let time = 0;
+    
+    // Swipe Mechanics
+    let lastSwipeSide = null; // 'LEFT' or 'RIGHT'
+    let touchStartX = 0;
+    let touchStartY = 0;
+
+    // --- INPUT HANDLING ---
+    // Mobile Touch
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        touchStartX = e.changedTouches[0].clientX;
+        touchStartY = e.changedTouches[0].clientY;
+    }, {passive: false});
+
+    canvas.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        let endX = e.changedTouches[0].clientX;
+        let endY = e.changedTouches[0].clientY;
+        processInput(touchStartX, touchStartY, endX, endY);
+    }, {passive: false});
+
+    // Desktop Mouse (for testing on PC)
+    canvas.addEventListener('mousedown', (e) => {
+        touchStartX = e.clientX;
+        touchStartY = e.clientY;
+    });
+    canvas.addEventListener('mouseup', (e) => {
+        processInput(touchStartX, touchStartY, e.clientX, e.clientY);
+    });
+
+    function processInput(startX, startY, endX, endY) {
+        if (state === 'TITLE') {
+            state = 'MENU';
+            return;
+        }
+        
+        if (state === 'MENU') {
+            // Start the 100m Dash
+            resetGame();
+            state = 'PLAY';
+            return;
+        }
+        
+        if (state === 'GAMEOVER') {
+            state = 'MENU';
+            return;
+        }
+
+        if (state === 'PLAY') {
+            let diffY = Math.abs(endY - startY);
+            let diffX = Math.abs(endX - startX);
+            
+            // Determine if input was a swipe (movement > 20px) or just a tap. 
+            // We'll allow taps or short swipes for better mobile responsiveness.
+            let side = startX < width / 2 ? 'LEFT' : 'RIGHT';
+            
+            // To run, the player MUST alternate sides (thumbs)
+            if (side !== lastSwipeSide) {
+                speed += 3.5; // Boost speed per alternating thumb swipe
+                if (speed > 20) speed = 20; // Cap top speed
+                lastSwipeSide = side;
+            }
+        }
+    }
+
+    function resetGame() {
+        speed = 0;
+        distance = 0;
+        time = 0;
+        lastSwipeSide = null;
+    }
+
+    // --- GAME LOOP ---
+    let lastTime = performance.now();
+    
+    function loop(currentTime) {
+        let dt = (currentTime - lastTime) / 1000;
+        lastTime = currentTime;
+        
+        update(dt);
+        draw();
+        
+        requestAnimationFrame(loop);
+    }
+
+    // --- GAME LOGIC ---
+    function update(dt) {
+        if (state === 'PLAY') {
+            time += dt;
+            
+            // Convert speed to distance covered
+            distance += speed * dt * 0.4; 
+            
+            // Speed decay (friction) - player must keep swiping to maintain speed
+            speed *= 0.92; 
+            if (speed < 0.1) speed = 0;
+            
+            // Win Condition
+            if (distance >= maxDistance) {
+                state = 'GAMEOVER';
+            }
+        }
+    }
+
+    // --- RENDERING ---
+    function drawText(text, x, y, size, color="white", align="center") {
+        ctx.fillStyle = color;
+        ctx.font = `${size}px 'Press Start 2P', monospace`;
+        ctx.textAlign = align;
+        ctx.fillText(text, x, y);
+    }
+
+    function draw8BitPlayer(cx, cy) {
+        // Bobbing effect based on speed
+        let bob = speed > 0.5 ? Math.sin(distance * 5) * (speed * 0.3) : 0;
+        
+        // Shadow
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.beginPath();
+        ctx.ellipse(cx, cy + 30, 20, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Head
+        ctx.fillStyle = "#FFCCAA"; // Skin tone
+        ctx.fillRect(cx - 12, cy - 50 + bob, 24, 24); 
+
+        // Torso
+        ctx.fillStyle = "#FF3333"; // Red jersey
+        ctx.fillRect(cx - 16, cy - 25 + bob, 32, 35);
+
+        // Shorts
+        ctx.fillStyle = "#3333FF"; // Blue shorts
+        ctx.fillRect(cx - 16, cy + 10 + bob, 32, 10);
+
+        // Running Legs Animation (Scissors effect based on distance)
+        let legSwing = speed > 0.5 ? Math.sin(distance * 2) * 15 : 0;
+        
+        ctx.fillStyle = "#FFCCAA";
+        // Left Leg
+        ctx.fillRect(cx - 12, cy + 20, 10, 15 + legSwing);
+        // Right Leg
+        ctx.fillRect(cx + 2, cy + 20, 10, 15 - legSwing);
+        
+        // Shoes
+        ctx.fillStyle = "#EEEEEE";
+        ctx.fillRect(cx - 14, cy + 35 + legSwing, 14, 8);
+        ctx.fillRect(cx, cy + 35 - legSwing, 14, 8);
+    }
+
+    function draw() {
+        // 1. Draw Environment (Track)
+        ctx.fillStyle = "#4CAF50"; // Grass background
+        ctx.fillRect(0, 0, width, height);
+
+        // Red Track
+        ctx.fillStyle = "#B73239";
+        ctx.beginPath();
+        ctx.moveTo(width * 0.2, 0);
+        ctx.lineTo(width * 0.8, 0);
+        ctx.lineTo(width, height);
+        ctx.lineTo(0, height);
+        ctx.fill();
+
+        // Scrolling Track Lanes to simulate forward movement
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.7)";
+        ctx.lineWidth = 4;
+        let lineOffset = (distance * 30) % 150;
+        
+        for(let i = -150; i < height; i += 150) {
+            let y = i + lineOffset;
+            
+            // Lane 1
+            ctx.beginPath();
+            let x1 = width * 0.5 - (y / height) * (width * 0.4);
+            ctx.moveTo(x1, y);
+            ctx.lineTo(x1, y + 60);
+            ctx.stroke();
+
+            // Lane 2
+            ctx.beginPath();
+            let x2 = width * 0.5 + (y / height) * (width * 0.4);
+            ctx.moveTo(x2, y);
+            ctx.lineTo(x2, y + 60);
+            ctx.stroke();
+        }
+
+        // 2. Draw UI & States
+        if (state === 'TITLE') {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+            ctx.fillRect(0, 0, width, height);
+            
+            drawText("8-BIT TRACK", width/2, height * 0.4, Math.min(width/12, 40), "#FFD700");
+            
+            // Blinking text
+            if (Math.floor(Date.now() / 500) % 2 === 0) {
+                drawText("TAP TO START", width/2, height * 0.65, 16, "#FFFFFF");
+            }
+        } 
+        
+        else if (state === 'MENU') {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+            ctx.fillRect(0, 0, width, height);
+            
+            drawText("GAME MODES", width/2, height * 0.25, 24, "#FFFFFF");
+            
+            // Mode 1: 100m Dash
+            ctx.fillStyle = "#222";
+            ctx.fillRect(width * 0.1, height * 0.35, width * 0.8, 80);
+            ctx.strokeStyle = "#00FF00";
+            ctx.lineWidth = 3;
+            ctx.strokeRect(width * 0.1, height * 0.35, width * 0.8, 80);
+            drawText("100m Dash", width/2, height * 0.35 + 48, 16, "#00FF00");
+
+            // Mode 2: Coming Soon
+            ctx.fillStyle = "#111";
+            ctx.fillRect(width * 0.1, height * 0.55, width * 0.8, 80);
+            drawText("Long Jump", width/2, height * 0.55 + 38, 16, "#555555");
+            drawText("(Coming Soon)", width/2, height * 0.55 + 60, 10, "#555555");
+            
+            drawText("Tap anywhere to Play 100m", width/2, height * 0.85, 12, "#AAAAAA");
+        } 
+        
+        else if (state === 'PLAY') {
+            // Draw Player in lower center
+            draw8BitPlayer(width / 2, height * 0.7);
+
+            // Draw HUD (Heads Up Display)
+            drawText(`DIST: ${Math.floor(distance)}m / ${maxDistance}m`, 15, 30, 14, "#FFF", "left");
+            drawText(`TIME: ${time.toFixed(2)}s`, 15, 60, 14, "#FFF", "left");
+
+            // Speed Bar
+            ctx.fillStyle = "#333";
+            ctx.fillRect(width/2 - 50, 20, 100, 15);
+            ctx.fillStyle = speed > 15 ? "#FF0000" : "#00FF00";
+            ctx.fillRect(width/2 - 50, 20, (speed / 20) * 100, 15);
+            ctx.strokeStyle = "#FFF";
+            ctx.strokeRect(width/2 - 50, 20, 100, 15);
+
+            // Instructions Overlay (Fades out when running)
+            if (speed < 1 && distance < 5) {
+                drawText("<- SWIPE LEFT", width*0.25, height/2, 12, "rgba(255, 255, 0, 0.8)");
+                drawText("SWIPE RIGHT ->", width*0.75, height/2, 12, "rgba(255, 255, 0, 0.8)");
+                drawText("ALTERNATE THUMBS!", width/2, height/2 + 40, 14, "#FFF");
+            }
+        } 
+        
+        else if (state === 'GAMEOVER') {
+            draw8BitPlayer(width / 2, height * 0.7); // Draw player stopped
+            
+            ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+            ctx.fillRect(0, 0, width, height);
+            
+            drawText("FINISH!", width/2, height * 0.35, 40, "#00FF00");
+            drawText(`Final Time:`, width/2, height * 0.5, 18, "#FFF");
+            drawText(`${time.toFixed(2)}s`, width/2, height * 0.58, 30, "#FFD700");
+            
+            drawText("Tap to return to Menu", width/2, height * 0.8, 12, "#AAAAAA");
+        }
+    }
+
+    // Start Engine
+    requestAnimationFrame(loop);
+</script>
+</body>
+</html>
