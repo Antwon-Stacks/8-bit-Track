@@ -14,10 +14,11 @@
             height: 100%;
             background-color: #222;
             overflow: hidden;
-            touch-action: none; /* Prevents pull-to-refresh and scrolling on mobile */
+            touch-action: none; /* Prevents pull-to-refresh on mobile */
             font-family: 'Press Start 2P', monospace;
             color: white;
             user-select: none;
+            -webkit-user-select: none; /* Prevents accidental highlighting when tapping fast */
         }
 
         canvas {
@@ -48,52 +49,37 @@
         canvas.height = height;
     });
 
-    // Game States: TITLE, MENU, PLAY, GAMEOVER
     let state = 'TITLE'; 
     
     // Core Game Variables
-    let speed = 0;
+    let speed = 0; // Measured in Meters Per Second (m/s)
     let distance = 0;
     let maxDistance = 100; // 100m dash
     let time = 0;
     
-    // Swipe Mechanics
-    let lastSwipeSide = null; // 'LEFT' or 'RIGHT'
-    let touchStartX = 0;
-    let touchStartY = 0;
+    // Tap Mechanics
+    let lastSwipeSide = null; 
 
     // --- INPUT HANDLING ---
-    // Mobile Touch
+    // Mobile Touch (Fires immediately on touch, no need to release!)
     canvas.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        touchStartX = e.changedTouches[0].clientX;
-        touchStartY = e.changedTouches[0].clientY;
-    }, {passive: false});
-
-    canvas.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        let endX = e.changedTouches[0].clientX;
-        let endY = e.changedTouches[0].clientY;
-        processInput(touchStartX, touchStartY, endX, endY);
+        let touchX = e.changedTouches[0].clientX;
+        processInput(touchX);
     }, {passive: false});
 
     // Desktop Mouse (for testing on PC)
     canvas.addEventListener('mousedown', (e) => {
-        touchStartX = e.clientX;
-        touchStartY = e.clientY;
-    });
-    canvas.addEventListener('mouseup', (e) => {
-        processInput(touchStartX, touchStartY, e.clientX, e.clientY);
+        processInput(e.clientX);
     });
 
-    function processInput(startX, startY, endX, endY) {
+    function processInput(x) {
         if (state === 'TITLE') {
             state = 'MENU';
             return;
         }
         
         if (state === 'MENU') {
-            // Start the 100m Dash
             resetGame();
             state = 'PLAY';
             return;
@@ -105,17 +91,13 @@
         }
 
         if (state === 'PLAY') {
-            let diffY = Math.abs(endY - startY);
-            let diffX = Math.abs(endX - startX);
+            // Screen is split 50/50 down the middle
+            let side = x < width / 2 ? 'LEFT' : 'RIGHT';
             
-            // Determine if input was a swipe (movement > 20px) or just a tap. 
-            // We'll allow taps or short swipes for better mobile responsiveness.
-            let side = startX < width / 2 ? 'LEFT' : 'RIGHT';
-            
-            // To run, the player MUST alternate sides (thumbs)
+            // To run, the player MUST alternate thumbs
             if (side !== lastSwipeSide) {
-                speed += 3.5; // Boost speed per alternating thumb swipe
-                if (speed > 20) speed = 20; // Cap top speed
+                speed += 1.5; // Gain 1.5 m/s per alternating tap
+                if (speed > 12.5) speed = 12.5; // Capped at World Record max velocity
                 lastSwipeSide = side;
             }
         }
@@ -135,6 +117,9 @@
         let dt = (currentTime - lastTime) / 1000;
         lastTime = currentTime;
         
+        // Prevent massive physics jumps if the tab is left idle
+        if (dt > 0.1) dt = 0.1;
+        
         update(dt);
         draw();
         
@@ -146,15 +131,17 @@
         if (state === 'PLAY') {
             time += dt;
             
-            // Convert speed to distance covered
-            distance += speed * dt * 0.4; 
+            // 1 unit of speed = 1 meter. 
+            distance += speed * dt; 
             
-            // Speed decay (friction) - player must keep swiping to maintain speed
-            speed *= 0.92; 
-            if (speed < 0.1) speed = 0;
+            // Frame-rate independent friction!
+            // Player loses 85% of their current speed per second if they stop tapping.
+            speed -= (speed * 0.85) * dt; 
+            if (speed < 0.01) speed = 0;
             
             // Win Condition
             if (distance >= maxDistance) {
+                distance = maxDistance; // Lock perfectly at 100 for the UI
                 state = 'GAMEOVER';
             }
         }
@@ -169,8 +156,8 @@
     }
 
     function draw8BitPlayer(cx, cy) {
-        // Bobbing effect based on speed
-        let bob = speed > 0.5 ? Math.sin(distance * 5) * (speed * 0.3) : 0;
+        // Bobbing effect scales with the new realistic speed metrics
+        let bob = speed > 0.5 ? Math.sin(distance * 5) * (speed * 0.5) : 0;
         
         // Shadow
         ctx.fillStyle = "rgba(0,0,0,0.3)";
@@ -190,7 +177,7 @@
         ctx.fillStyle = "#3333FF"; // Blue shorts
         ctx.fillRect(cx - 16, cy + 10 + bob, 32, 10);
 
-        // Running Legs Animation (Scissors effect based on distance)
+        // Running Legs Animation 
         let legSwing = speed > 0.5 ? Math.sin(distance * 2) * 15 : 0;
         
         ctx.fillStyle = "#FFCCAA";
@@ -213,30 +200,30 @@
         // Red Track
         ctx.fillStyle = "#B73239";
         ctx.beginPath();
-        ctx.moveTo(width * 0.2, 0);
-        ctx.lineTo(width * 0.8, 0);
+        ctx.moveTo(width * 0.15, 0);
+        ctx.lineTo(width * 0.85, 0);
         ctx.lineTo(width, height);
         ctx.lineTo(0, height);
         ctx.fill();
 
-        // Scrolling Track Lanes to simulate forward movement
+        // Scrolling Track Lanes
         ctx.strokeStyle = "rgba(255, 255, 255, 0.7)";
         ctx.lineWidth = 4;
-        let lineOffset = (distance * 30) % 150;
+        let lineOffset = (distance * 40) % 150;
         
         for(let i = -150; i < height; i += 150) {
             let y = i + lineOffset;
             
             // Lane 1
             ctx.beginPath();
-            let x1 = width * 0.5 - (y / height) * (width * 0.4);
+            let x1 = width * 0.5 - (y / height) * (width * 0.42);
             ctx.moveTo(x1, y);
             ctx.lineTo(x1, y + 60);
             ctx.stroke();
 
             // Lane 2
             ctx.beginPath();
-            let x2 = width * 0.5 + (y / height) * (width * 0.4);
+            let x2 = width * 0.5 + (y / height) * (width * 0.42);
             ctx.moveTo(x2, y);
             ctx.lineTo(x2, y + 60);
             ctx.stroke();
@@ -247,7 +234,7 @@
             ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
             ctx.fillRect(0, 0, width, height);
             
-            drawText("8-BIT TRACK", width/2, height * 0.4, Math.min(width/12, 40), "#FFD700");
+            drawText("8-BIT TRACK", width/2, height * 0.4, Math.min(width/10, 40), "#FFD700");
             
             // Blinking text
             if (Math.floor(Date.now() / 500) % 2 === 0) {
@@ -282,22 +269,24 @@
             // Draw Player in lower center
             draw8BitPlayer(width / 2, height * 0.7);
 
-            // Draw HUD (Heads Up Display)
-            drawText(`DIST: ${Math.floor(distance)}m / ${maxDistance}m`, 15, 30, 14, "#FFF", "left");
-            drawText(`TIME: ${time.toFixed(2)}s`, 15, 60, 14, "#FFF", "left");
+            // Draw HUD
+            drawText(`DIST: ${Math.floor(distance)}m / ${maxDistance}m`, 15, 30, 12, "#FFF", "left");
+            drawText(`TIME: ${time.toFixed(2)}s`, 15, 60, 12, "#FFF", "left");
 
-            // Speed Bar
+            // Speed Bar (Scales up to 12.5 Max Speed)
             ctx.fillStyle = "#333";
-            ctx.fillRect(width/2 - 50, 20, 100, 15);
-            ctx.fillStyle = speed > 15 ? "#FF0000" : "#00FF00";
-            ctx.fillRect(width/2 - 50, 20, (speed / 20) * 100, 15);
+            let barWidth = Math.min(width * 0.4, 200);
+            ctx.fillRect(width/2 - barWidth/2, 20, barWidth, 15);
+            
+            ctx.fillStyle = speed > 10.5 ? "#FF0000" : "#00FF00";
+            ctx.fillRect(width/2 - barWidth/2, 20, (speed / 12.5) * barWidth, 15);
             ctx.strokeStyle = "#FFF";
-            ctx.strokeRect(width/2 - 50, 20, 100, 15);
+            ctx.strokeRect(width/2 - barWidth/2, 20, barWidth, 15);
 
-            // Instructions Overlay (Fades out when running)
+            // Instructions Overlay
             if (speed < 1 && distance < 5) {
-                drawText("<- SWIPE LEFT", width*0.25, height/2, 12, "rgba(255, 255, 0, 0.8)");
-                drawText("SWIPE RIGHT ->", width*0.75, height/2, 12, "rgba(255, 255, 0, 0.8)");
+                drawText("TAP LEFT", width*0.25, height/2, 12, "rgba(255, 255, 0, 0.8)");
+                drawText("TAP RIGHT", width*0.75, height/2, 12, "rgba(255, 255, 0, 0.8)");
                 drawText("ALTERNATE THUMBS!", width/2, height/2 + 40, 14, "#FFF");
             }
         } 
