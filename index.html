@@ -49,6 +49,7 @@
     });
 
     let state = 'TITLE'; // TITLE, MENU, START_LIGHT, PLAY, GAMEOVER
+    let gameMode = '100M'; // '100M' or 'HURDLES'
     
     // Core Game Variables
     let speed = 0; 
@@ -57,18 +58,27 @@
     let time = 0;
     let gameOverDelay = 0;
     
-    // High Score System (Loaded from LocalStorage)
-    let highScore = localStorage.getItem('8bit_track_highscore') ? parseFloat(localStorage.getItem('8bit_track_highscore')) : null;
+    // High Scores (Loaded from LocalStorage)
+    let highScore100m = localStorage.getItem('8bit_track_pb_100m') ? parseFloat(localStorage.getItem('8bit_track_pb_100m')) : null;
+    let highScoreHurdles = localStorage.getItem('8bit_track_pb_hurdles') ? parseFloat(localStorage.getItem('8bit_track_pb_hurdles')) : null;
+
+    // Hurdles Specific Variables
+    let hurdles = [];
+    let jumpHeight = 0;
+    let isJumping = false;
+    let stumbleTimer = 0;
 
     // Start Light Variables
     let lightTimer = 0;
-    let lightState = 0; // 0: "READY", 1: "SET", 2: "GO!", 3: "FALSE START"
+    let lightState = 0; // 0: READY, 1: SET, 2: GO!, 3: FALSE START
     
-    // Tap Mechanics & Snowflake Particles
+    // Touch & Swipe Mechanics
     let lastSwipeSide = null; 
+    let touchStartX = 0;
+    let touchStartY = 0;
+    
+    // Snowflakes background
     let snowflakes = [];
-
-    // Initialize background snowflakes
     for(let i = 0; i < 30; i++) {
         snowflakes.push({
             x: Math.random() * width,
@@ -81,29 +91,53 @@
     // --- INPUT HANDLING ---
     canvas.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        processInput(e.changedTouches[0].clientX);
+        touchStartX = e.changedTouches[0].clientX;
+        touchStartY = e.changedTouches[0].clientY;
     }, {passive: false});
 
+    canvas.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        let endX = e.changedTouches[0].clientX;
+        let endY = e.changedTouches[0].clientY;
+        processInput(touchStartX, touchStartY, endX, endY);
+    }, {passive: false});
+
+    // Desktop Mouse (for testing on PC)
     canvas.addEventListener('mousedown', (e) => {
-        processInput(e.clientX);
+        touchStartX = e.clientX;
+        touchStartY = e.clientY;
+    });
+    canvas.addEventListener('mouseup', (e) => {
+        processInput(touchStartX, touchStartY, e.clientX, e.clientY);
     });
 
-    function processInput(x) {
+    function processInput(startX, startY, endX, endY) {
         if (state === 'TITLE') {
             state = 'MENU';
             return;
         }
         
         if (state === 'MENU') {
-            startCountdownSequence();
+            // Check menu box clicks/taps
+            // Box 1: 100m Dash (y: 0.3 to 0.42)
+            if (startY > height * 0.3 && startY < height * 0.44) {
+                gameMode = '100M';
+                maxDistance = 100;
+                startCountdownSequence();
+            }
+            // Box 2: Hurdles (y: 0.5 to 0.62)
+            else if (startY > height * 0.5 && startY < height * 0.64) {
+                gameMode = 'HURDLES';
+                maxDistance = 100;
+                startCountdownSequence();
+            }
             return;
         }
         
         if (state === 'START_LIGHT') {
-            // Tapping before GO! causes a False Start
             if (lightState < 2) {
-                lightState = 3; // False Start state
-                lightTimer = 1.5; // Display penalty message for 1.5s
+                lightState = 3; // False Start
+                lightTimer = 1.5;
             }
             return;
         }
@@ -116,12 +150,26 @@
         }
 
         if (state === 'PLAY') {
-            let side = x < width / 2 ? 'LEFT' : 'RIGHT';
-            
-            if (side !== lastSwipeSide) {
-                speed += 1.5; 
-                if (speed > 12.5) speed = 12.5; 
-                lastSwipeSide = side;
+            let diffY = endY - startY;
+            let diffX = endX - startX;
+
+            // Check for Swipe Up to Jump (specifically in Hurdles mode)
+            if (gameMode === 'HURDLES' && diffY < -30 && Math.abs(diffY) > Math.abs(diffX)) {
+                if (!isJumping && stumbleTimer <= 0) {
+                    isJumping = true;
+                    jumpHeight = 1.0; // Trigger jump apex progress
+                }
+                return;
+            }
+
+            // Standard Running Alternate Tap Logic
+            if (stumbleTimer <= 0) {
+                let side = endX < width / 2 ? 'LEFT' : 'RIGHT';
+                if (side !== lastSwipeSide) {
+                    speed += 1.3; // Adjusted gain for balanced times
+                    if (speed > 11.5) speed = 11.5; // Capped at realistic elite speed (~9.8s theoretical best)
+                    lastSwipeSide = side;
+                }
             }
         }
     }
@@ -129,8 +177,8 @@
     function startCountdownSequence() {
         resetGame();
         state = 'START_LIGHT';
-        lightState = 0; // READY
-        lightTimer = 1.0; // 1 second per light phase
+        lightState = 0; 
+        lightTimer = 1.0; 
     }
 
     function resetGame() {
@@ -139,6 +187,17 @@
         time = 0;
         lastSwipeSide = null;
         gameOverDelay = 0;
+        jumpHeight = 0;
+        isJumping = false;
+        stumbleTimer = 0;
+        
+        // Populate Hurdles if in Hurdles mode (placed every 18 meters)
+        hurdles = [];
+        if (gameMode === 'HURDLES') {
+            for (let d = 18; d < 95; d += 18) {
+                hurdles.push({ pos: d, cleared: false });
+            }
+        }
     }
 
     // --- GAME LOOP ---
@@ -158,9 +217,8 @@
 
     // --- GAME LOGIC ---
     function update(dt) {
-        // Update Snowflakes background animation
         snowflakes.forEach(flake => {
-            flake.y += flake.speed + (speed * 0.2); // Snow moves faster as player runs
+            flake.y += flake.speed + (speed * 0.2); 
             if (flake.y > height) {
                 flake.y = 0;
                 flake.x = Math.random() * width;
@@ -171,15 +229,14 @@
             lightTimer -= dt;
             if (lightTimer <= 0) {
                 if (lightState === 0) {
-                    lightState = 1; // SET
+                    lightState = 1; 
                     lightTimer = 1.0;
                 } else if (lightState === 1) {
-                    lightState = 2; // GO!
+                    lightState = 2; 
                     lightTimer = 0.4;
                 } else if (lightState === 2) {
-                    state = 'PLAY'; // Transition to active running
+                    state = 'PLAY'; 
                 } else if (lightState === 3) {
-                    // Return to menu after false start penalty
                     state = 'MENU';
                 }
             }
@@ -187,10 +244,42 @@
 
         if (state === 'PLAY') {
             time += dt;
-            distance += speed * dt; 
+
+            // Handle Stumble recovery slowdown
+            if (stumbleTimer > 0) {
+                stumbleTimer -= dt;
+                speed = 2.0; // Dragged down speed during recovery
+            } else {
+                speed -= (speed * 0.88) * dt; 
+                if (speed < 0.01) speed = 0;
+            }
             
-            speed -= (speed * 0.85) * dt; 
-            if (speed < 0.01) speed = 0;
+            distance += speed * dt; 
+
+            // Handle Jump arc physics
+            if (isJumping) {
+                jumpHeight -= dt * 3.5; // Jump duration
+                if (jumpHeight <= 0) {
+                    jumpHeight = 0;
+                    isJumping = false;
+                }
+            }
+
+            // Hurdle Collision Checks
+            if (gameMode === 'HURDLES') {
+                hurdles.forEach(h => {
+                    if (!h.cleared && Math.abs(distance - h.pos) < 1.5) {
+                        if (jumpHeight > 0.2) {
+                            h.cleared = true; // Successfully cleared!
+                        } else {
+                            // Hit the hurdle! Stumble penalty
+                            stumbleTimer = 0.8;
+                            speed = 0;
+                            h.cleared = true;
+                        }
+                    }
+                });
+            }
             
             // Win Condition
             if (distance >= maxDistance) {
@@ -198,10 +287,17 @@
                 state = 'GAMEOVER';
                 gameOverDelay = 2.0; 
 
-                // Check and Save High Score
-                if (highScore === null || time < highScore) {
-                    highScore = time;
-                    localStorage.setItem('8bit_track_highscore', highScore);
+                // Save High Score based on active game mode
+                if (gameMode === '100M') {
+                    if (highScore100m === null || time < highScore100m) {
+                        highScore100m = time;
+                        localStorage.setItem('8bit_track_pb_100m', highScore100m);
+                    }
+                } else {
+                    if (highScoreHurdles === null || time < highScoreHurdles) {
+                        highScoreHurdles = time;
+                        localStorage.setItem('8bit_track_pb_hurdles', highScoreHurdles);
+                    }
                 }
             }
         }
@@ -222,54 +318,66 @@
     }
 
     function draw8BitPlayer(cx, cy) {
-        let bob = speed > 0.5 ? Math.sin(distance * 5) * (speed * 0.5) : 0;
+        // Vertical jump offset if player is airborne
+        let jumpOffset = isJumping ? Math.sin(jumpHeight * Math.PI) * 50 : 0;
+        let bob = (speed > 0.5 && jumpOffset === 0) ? Math.sin(distance * 5) * (speed * 0.5) : 0;
         
+        let renderY = cy - jumpOffset;
+
+        // Shadow stays on ground
         ctx.fillStyle = "rgba(0,0,0,0.3)";
         ctx.beginPath();
-        ctx.ellipse(cx, cy + 30, 20, 5, 0, 0, Math.PI * 2);
+        ctx.ellipse(cx, cy + 30, Math.max(5, 20 - jumpOffset*0.2), Math.max(2, 5 - jumpOffset*0.05), 0, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.fillStyle = "#FFCCAA"; 
-        ctx.fillRect(cx - 12, cy - 50 + bob, 24, 24); 
+        // Stumble tilt or normal stance
+        ctx.save();
+        if (stumbleTimer > 0) {
+            ctx.translate(cx, renderY);
+            ctx.rotate(0.4); // Tilt forward on crash
+            ctx.translate(-cx, -renderY);
+        }
 
-        ctx.fillStyle = "#FF3333"; 
-        ctx.fillRect(cx - 16, cy - 25 + bob, 32, 35);
+        ctx.fillStyle = "#FFCCAA"; 
+        ctx.fillRect(cx - 12, renderY - 50 + bob, 24, 24); 
+
+        ctx.fillStyle = gameMode === 'HURDLES' ? "#33CC33" : "#FF3333"; // Green jersey for hurdles, Red for dash
+        ctx.fillRect(cx - 16, renderY - 25 + bob, 32, 35);
 
         ctx.fillStyle = "#3333FF"; 
-        ctx.fillRect(cx - 16, cy + 10 + bob, 32, 10);
+        ctx.fillRect(cx - 16, renderY + 10 + bob, 32, 10);
 
         let legSwing = speed > 0.5 ? Math.sin(distance * 2) * 15 : 0;
         
         ctx.fillStyle = "#FFCCAA";
-        ctx.fillRect(cx - 12, cy + 20, 10, 15 + legSwing);
-        ctx.fillRect(cx + 2, cy + 20, 10, 15 - legSwing);
+        ctx.fillRect(cx - 12, renderY + 20, 10, 15 + legSwing);
+        ctx.fillRect(cx + 2, renderY + 20, 10, 15 - legSwing);
         
         ctx.fillStyle = "#EEEEEE";
-        ctx.fillRect(cx - 14, cy + 35 + legSwing, 14, 8);
-        ctx.fillRect(cx, cy + 35 - legSwing, 14, 8);
+        ctx.fillRect(cx - 14, renderY + 35 + legSwing, 14, 8);
+        ctx.fillRect(cx, renderY + 35 - legSwing, 14, 8);
+
+        ctx.restore();
     }
 
     function draw() {
         ctx.save();
 
-        // Camera Shake effect when running over 10 m/s
         if (state === 'PLAY' && speed > 10) {
             let shakeX = (Math.random() - 0.5) * 4;
             let shakeY = (Math.random() - 0.5) * 4;
             ctx.translate(shakeX, shakeY);
         }
 
-        // 1. Draw Environment (Frozen Tundra Track)
-        ctx.fillStyle = "#1E3B5C"; // Deep winter ice-blue background
+        // Environment
+        ctx.fillStyle = "#1E3B5C"; 
         ctx.fillRect(0, 0, width, height);
 
-        // Render Snowflakes (Iced Ether theme)
         ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
         snowflakes.forEach(flake => {
             ctx.fillRect(flake.x, flake.y, flake.size, flake.size);
         });
 
-        // Red Track
         ctx.fillStyle = "#B73239";
         ctx.beginPath();
         ctx.moveTo(width * 0.15, 0);
@@ -299,7 +407,30 @@
             ctx.stroke();
         }
 
-        // 2. Draw UI & States
+        // Render Hurdles if in Hurdle mode
+        if (gameMode === 'HURDLES') {
+            hurdles.forEach(h => {
+                let distAhead = h.pos - distance;
+                // Only render if close enough on track perspective
+                if (distAhead >= -2 && distAhead < 35) {
+                    // Map distance ahead to screen Y position
+                    let hurdleY = height * 0.7 - (distAhead * 18);
+                    let hurdleScale = Math.max(0.2, 1 - (distAhead / 35));
+                    
+                    if (hurdlesY > 0 && hurdleY < height) {
+                        ctx.fillStyle = "#FFFFFF";
+                        let hWidth = 80 * hurdleScale;
+                        let hHeight = 12 * hurdleScale;
+                        ctx.fillRect(width/2 - hWidth/2, hurdleY, hWidth, hHeight);
+                        // Hurdle base posts
+                        ctx.fillRect(width/2 - hWidth/2, hurdleY, 4 * hurdleScale, 25 * hurdleScale);
+                        ctx.fillRect(width/2 + hWidth/2 - 4 * hurdleScale, hurdleY, 4 * hurdleScale, 25 * hurdleScale);
+                    }
+                }
+            });
+        }
+
+        // UI & States
         if (state === 'TITLE') {
             ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
             ctx.fillRect(0, 0, width, height);
@@ -313,33 +444,32 @@
         } 
         
         else if (state === 'MENU') {
-            ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+            ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
             ctx.fillRect(0, 0, width, height);
             
-            drawText("GAME MODES", width/2, height * 0.2, 24, "#FFFFFF");
+            drawText("SELECT EVENT", width/2, height * 0.15, 22, "#FFFFFF");
             
-            // Mode 1: 100m Dash
+            // Mode 1: 100m Dash Box
             ctx.fillStyle = "#222";
-            ctx.fillRect(width * 0.1, height * 0.3, width * 0.8, 80);
+            ctx.fillRect(width * 0.1, height * 0.28, width * 0.8, 75);
             ctx.strokeStyle = "#00FF00";
             ctx.lineWidth = 3;
-            ctx.strokeRect(width * 0.1, height * 0.3, width * 0.8, 80);
-            drawText("100m Dash", width/2, height * 0.3 + 48, 16, "#00FF00");
+            ctx.strokeRect(width * 0.1, height * 0.28, width * 0.8, 75);
+            drawText("100m Dash", width/2, height * 0.28 + 38, 14, "#00FF00");
+            let pb100Str = highScore100m !== null ? `${highScore100m.toFixed(2)}s` : "--.--s";
+            drawText(`PB: ${pb100Str}`, width/2, height * 0.28 + 62, 10, "#FFD700");
 
-            // Display Personal Best High Score on Menu
-            if (highScore !== null) {
-                drawText(`PB: ${highScore.toFixed(2)}s`, width/2, height * 0.47, 12, "#FFD700");
-            } else {
-                drawText(`PB: --.--s`, width/2, height * 0.47, 12, "#888888");
-            }
+            // Mode 2: Hurdles Box
+            ctx.fillStyle = "#222";
+            ctx.fillRect(width * 0.1, height * 0.48, width * 0.8, 75);
+            ctx.strokeStyle = "#33CCFF";
+            ctx.lineWidth = 3;
+            ctx.strokeRect(width * 0.1, height * 0.48, width * 0.8, 75);
+            drawText("110m Hurdles", width/2, height * 0.48 + 38, 14, "#33CCFF");
+            let pbHurdlesStr = highScoreHurdles !== null ? `${highScoreHurdles.toFixed(2)}s` : "--.--s";
+            drawText(`PB: ${pbHurdlesStr}`, width/2, height * 0.48 + 62, 10, "#FFD700");
 
-            // Mode 2: Coming Soon
-            ctx.fillStyle = "#111";
-            ctx.fillRect(width * 0.1, height * 0.55, width * 0.8, 80);
-            drawText("Long Jump", width/2, height * 0.55 + 38, 16, "#555555");
-            drawText("(Coming Soon)", width/2, height * 0.55 + 60, 10, "#555555");
-            
-            drawText("Tap anywhere to Play 100m", width/2, height * 0.85, 12, "#AAAAAA");
+            drawText("Tap an event box to play", width/2, height * 0.82, 12, "#AAAAAA");
         }
 
         else if (state === 'START_LIGHT') {
@@ -365,20 +495,29 @@
 
             drawText(`DIST: ${Math.floor(distance)}m / ${maxDistance}m`, 15, 30, 12, "#FFF", "left");
             drawText(`TIME: ${time.toFixed(2)}s`, 15, 60, 12, "#FFF", "left");
+            if (gameMode === 'HURDLES') {
+                drawText(`HURDLES EVENT`, width - 15, 30, 10, "#33CCFF", "right");
+            }
+
+            // Stumble warning overlay
+            if (stumbleTimer > 0) {
+                drawText("STUMBLED!", width/2, height * 0.35, 18, "#FF0000");
+            }
 
             ctx.fillStyle = "#333";
             let barWidth = Math.min(width * 0.4, 200);
             ctx.fillRect(width/2 - barWidth/2, 20, barWidth, 15);
             
-            ctx.fillStyle = speed > 10.5 ? "#FF0000" : "#00FF00";
-            ctx.fillRect(width/2 - barWidth/2, 20, (speed / 12.5) * barWidth, 15);
+            ctx.fillStyle = speed > 10 ? "#FF0000" : "#00FF00";
+            ctx.fillRect(width/2 - barWidth/2, 20, (speed / 11.5) * barWidth, 15);
             ctx.strokeStyle = "#FFF";
             ctx.strokeRect(width/2 - barWidth/2, 20, barWidth, 15);
 
             if (speed < 1 && distance < 5) {
-                drawText("TAP LEFT", width*0.25, height/2, 12, "rgba(255, 255, 0, 0.8)");
-                drawText("TAP RIGHT", width*0.75, height/2, 12, "rgba(255, 255, 0, 0.8)");
-                drawText("ALTERNATE THUMBS!", width/2, height/2 + 40, 14, "#FFF");
+                drawText("ALT TAP TO RUN", width/2, height * 0.42, 12, "rgba(255, 255, 0, 0.9)");
+                if (gameMode === 'HURDLES') {
+                    drawText("SWIPE UP TO JUMP!", width/2, height * 0.47, 12, "rgba(51, 204, 255, 0.9)");
+                }
             }
         } 
         
@@ -392,7 +531,8 @@
             drawText(`Final Time:`, width/2, height * 0.44, 16, "#FFF");
             drawText(`${time.toFixed(2)}s`, width/2, height * 0.52, 26, "#FFD700");
 
-            if (highScore !== null && Math.abs(time - highScore) < 0.001) {
+            let currentPB = gameMode === '100M' ? highScore100m : highScoreHurdles;
+            if (currentPB !== null && Math.abs(time - currentPB) < 0.001) {
                 drawText("NEW PERSONAL BEST!", width/2, height * 0.63, 12, "#00FFFF");
             }
             
