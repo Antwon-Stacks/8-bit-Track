@@ -19,7 +19,6 @@
             -webkit-user-select: none;
         }
 
-        /* Removed width/height 100% here to prevent the mobile canvas collapse bug */
         canvas {
             display: block;
         }
@@ -35,7 +34,6 @@
     
     let width, height;
 
-    // Bulletproof mobile initialization
     function resize() {
         width = window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth;
         height = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight;
@@ -46,8 +44,10 @@
     window.addEventListener('orientationchange', () => setTimeout(resize, 100));
     resize();
 
-    // Game States
-    let state = 'MENU'; // 'MENU', 'PLAYING', 'GAMEOVER', 'TRACK_MEET_SUMMARY'
+    // App Navigation States
+    // 'TITLE', 'MAIN_MENU', 'SINGLE_EVENT_MENU', 'LEADERBOARD', 'PLAYING', 'GAMEOVER', 'TRACK_MEET_SUMMARY'
+    let state = 'TITLE';
+    
     let selectedEventKey = '100M'; 
     let isTrackMeet = false;
     const trackMeetEvents = ['100M', 'HURDLES', 'LONG_JUMP', 'JAVELIN'];
@@ -56,7 +56,7 @@
     
     let gameOverDelay = 0;
     
-    // Core Variables
+    // Core Gameplay Variables
     let speed = 0;
     const maxSpeed = 16;
     let distance = 0;
@@ -84,7 +84,21 @@
     let frameCount = 0;
     const hurdleDistances = [20, 40, 60, 80];
 
-    // --- Helper Functions ---
+    // Local Leaderboard Storage mock
+    let leaderboard = JSON.parse(localStorage.getItem('8bit_track_lb')) || {
+        '100M': 'None',
+        'HURDLES': 'None',
+        'LONG_JUMP': 'None',
+        'JAVELIN': 'None'
+    };
+
+    function saveScore(eventKey, scoreStr) {
+        if (leaderboard[eventKey] === 'None' || scoreStr < leaderboard[eventKey]) {
+            leaderboard[eventKey] = scoreStr;
+            localStorage.setItem('8bit_track_lb', JSON.stringify(leaderboard));
+        }
+    }
+
     function drawText(text, x, y, size, color = "white", align = "center") {
         ctx.fillStyle = color;
         ctx.font = `${size}px 'Press Start 2P', monospace`;
@@ -131,35 +145,67 @@
     function endEvent(scoreText) {
         state = 'GAMEOVER';
         resultScore = scoreText;
-        gameOverDelay = 1.5; // Prevent instant tapping through screen
+        gameOverDelay = 1.5; 
         
         if (isTrackMeet) {
             trackMeetScores[selectedEventKey] = scoreText;
+        } else {
+            saveScore(selectedEventKey, scoreText);
         }
     }
 
-    // --- Input Listeners ---
+    // --- Input Handling ---
     canvas.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        
-        if (state === 'MENU') {
-            let touchY = e.changedTouches[0].clientY;
-            let step = height / 5;
+        let t = e.changedTouches[0];
+        let touchY = t.clientY;
+        let touchX = t.clientX;
+
+        if (state === 'TITLE') {
+            state = 'MAIN_MENU';
+            return;
+        }
+
+        if (state === 'MAIN_MENU') {
+            let step = height / 4;
+            let btnY = height * 0.3;
             
-            if (touchY < step) startGame('100M');
-            else if (touchY < step * 2) startGame('HURDLES');
-            else if (touchY < step * 3) startGame('LONG_JUMP');
-            else if (touchY < step * 4) startGame('JAVELIN');
-            else {
+            // Single Event Button
+            if (touchY >= btnY && touchY < btnY + step) {
+                state = 'SINGLE_EVENT_MENU';
+            }
+            // Track Meet Button
+            else if (touchY >= btnY + step && touchY < btnY + step * 2) {
                 currentMeetIndex = 0;
                 trackMeetScores = {};
                 startGame(trackMeetEvents[currentMeetIndex], true);
             }
+            // Leaderboard Button
+            else if (touchY >= btnY + step * 2 && touchY < btnY + step * 3) {
+                state = 'LEADERBOARD';
+            }
+            return;
+        }
+
+        if (state === 'SINGLE_EVENT_MENU') {
+            let step = height / 6;
+            let startY = height * 0.25;
+            
+            if (touchY >= startY && touchY < startY + step) startGame('100M', false);
+            else if (touchY >= startY + step && touchY < startY + step * 2) startGame('HURDLES', false);
+            else if (touchY >= startY + step * 2 && touchY < startY + step * 3) startGame('LONG_JUMP', false);
+            else if (touchY >= startY + step * 3 && touchY < startY + step * 4) startGame('JAVELIN', false);
+            else if (touchY >= startY + step * 4) state = 'MAIN_MENU'; // Back button
+            return;
+        }
+
+        if (state === 'LEADERBOARD') {
+            state = 'MAIN_MENU';
             return;
         }
 
         if (state === 'GAMEOVER') {
-            if (gameOverDelay > 0) return; // Wait for delay
+            if (gameOverDelay > 0) return; 
             
             if (isTrackMeet) {
                 currentMeetIndex++;
@@ -169,29 +215,27 @@
                     state = 'TRACK_MEET_SUMMARY';
                 }
             } else {
-                state = 'MENU';
+                state = 'MAIN_MENU';
             }
             return;
         }
 
         if (state === 'TRACK_MEET_SUMMARY') {
-            state = 'MENU';
+            state = 'MAIN_MENU';
             return;
         }
 
         if (state === 'PLAYING') {
             for (let i = 0; i < e.changedTouches.length; i++) {
-                let t = e.changedTouches[i];
-                touchStartY = t.clientY;
-                let side = (t.clientX < width / 2) ? 'left' : 'right';
+                let touch = e.changedTouches[i];
+                touchStartY = touch.clientY;
+                let side = (touch.clientX < width / 2) ? 'left' : 'right';
                 activeTouches[side] = true;
 
-                // Two-thumb jump for Hurdles
                 if (selectedEventKey === 'HURDLES' && activeTouches['left'] && activeTouches['right'] && !isJumping) {
                     isJumping = true;
                     jumpVy = -11;
                 } 
-                // Running mechanics
                 else if (!isJumping && !actionTriggered) {
                     if (side !== lastTapSide) {
                         speed += 2.2;
@@ -207,12 +251,11 @@
         e.preventDefault();
         if (state === 'PLAYING') {
             for (let i = 0; i < e.changedTouches.length; i++) {
-                let t = e.changedTouches[i];
-                let side = (t.clientX < width / 2) ? 'left' : 'right';
+                let touch = e.changedTouches[i];
+                let side = (touch.clientX < width / 2) ? 'left' : 'right';
                 activeTouches[side] = false;
 
-                // Detect Swipe Up
-                let diffY = touchStartY - t.clientY;
+                let diffY = touchStartY - touch.clientY;
                 if (diffY > 40) triggerSwipeAction();
             }
         }
@@ -228,7 +271,6 @@
         }
 
         if (state === 'PLAYING') {
-            
             if (!actionTriggered || selectedEventKey === 'LONG_JUMP') {
                 trackOffset -= speed;
                 if (trackOffset <= -40) trackOffset = 0;
@@ -247,11 +289,8 @@
                 speed *= 0.95; 
                 distance += speed * 0.1;
                 time += 1 / 60;
-                if (distance >= 100) {
-                    endEvent(`${time.toFixed(2)}s`);
-                }
+                if (distance >= 100) endEvent(`${time.toFixed(2)}s`);
             } 
-            
             else if (selectedEventKey === 'HURDLES') {
                 speed *= 0.95;
                 distance += speed * 0.1;
@@ -259,45 +298,33 @@
                 
                 hurdleDistances.forEach(h => {
                     if (distance >= h - 0.5 && distance <= h + 0.5 && jumpY > -15) {
-                        speed *= 0.4; // Trip on hurdle
+                        speed *= 0.4; 
                     }
                 });
 
-                if (distance >= 100) {
-                    endEvent(`${time.toFixed(2)}s`);
-                }
+                if (distance >= 100) endEvent(`${time.toFixed(2)}s`);
             }
-            
             else if (selectedEventKey === 'LONG_JUMP') {
                 if (!actionTriggered) {
                     speed *= 0.96;
                     distance += speed * 0.1;
-                    if (distance >= 50) {
-                        endEvent("FOUL!");
-                    }
+                    if (distance >= 50) endEvent("FOUL!");
                 } else {
                     speed *= 0.98; 
                     distance += speed * 0.1; 
-                    if (!isJumping) { 
-                        endEvent(`${jumpScore.toFixed(2)}m`);
-                    }
+                    if (!isJumping) endEvent(`${jumpScore.toFixed(2)}m`);
                 }
             } 
-            
             else if (selectedEventKey === 'JAVELIN') {
                 if (!actionTriggered) {
                     speed *= 0.96;
                     distance += speed * 0.1;
-                    if (distance >= 50) {
-                        endEvent("FOUL!");
-                    }
+                    if (distance >= 50) endEvent("FOUL!");
                 } else {
                     javelinX += javelinSpeedX;
                     javelinY += javelinVy;
                     javelinVy += gravity;
-                    if (javelinY >= 0) {
-                        endEvent(`${jumpScore.toFixed(2)}m`);
-                    }
+                    if (javelinY >= 0) endEvent(`${jumpScore.toFixed(2)}m`);
                 }
             }
         }
@@ -316,11 +343,9 @@
     }
 
     function draw() {
-        // Sky
         ctx.fillStyle = '#33ccff';
         ctx.fillRect(0, 0, width, height);
 
-        // Ground
         let horizonY = height * 0.6;
         ctx.fillStyle = '#c85a17';
         ctx.fillRect(0, horizonY, width, height - horizonY);
@@ -332,31 +357,72 @@
         ctx.lineTo(width, horizonY);
         ctx.stroke();
 
-        if (state === 'MENU') {
-            drawText("8-BIT TRACK", width/2, height * 0.12, 28, "#FFD700");
+        // 1. Title Screen State
+        if (state === 'TITLE') {
+            drawText("8-BIT TRACK", width/2, height * 0.35, 32, "#FFD700");
+            drawText("Tap Anywhere to Start", width/2, height * 0.55, 14, "#FFFFFF");
+        }
+        
+        // 2. Main Menu State
+        else if (state === 'MAIN_MENU') {
+            drawText("8-BIT TRACK", width/2, height * 0.15, 26, "#FFD700");
             
             let step = height / 5;
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            ctx.fillRect(20, step - 40, width - 40, step - 10);
-            ctx.fillRect(20, step * 2 - 40, width - 40, step - 10);
-            ctx.fillRect(20, step * 3 - 40, width - 40, step - 10);
-            ctx.fillRect(20, step * 4 - 40, width - 40, step - 10);
+            let btnY = height * 0.3;
             
-            ctx.fillStyle = 'rgba(255, 215, 0, 0.3)'; // Gold tint for Track Meet
-            ctx.fillRect(20, step * 5 - 40, width - 40, step - 10);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            ctx.fillRect(30, btnY, width - 60, step - 10);
+            ctx.fillRect(30, btnY + step, width - 60, step - 10);
+            ctx.fillRect(30, btnY + step * 2, width - 60, step - 10);
             
-            drawText("100m Dash", width/2, step + 10, 18);
-            drawText("Hurdles", width/2, step * 2 + 10, 18);
-            drawText("Long Jump", width/2, step * 3 + 10, 18);
-            drawText("Javelin", width/2, step * 4 + 10, 18);
+            drawText("Single Event", width/2, btnY + (step / 2), 16);
+            drawText("Track Meet", width/2, btnY + step + (step / 2), 16);
+            drawText("Leaderboard", width/2, btnY + step * 2 + (step / 2), 16);
+        }
+
+        // 3. Single Event Selection Menu
+        else if (state === 'SINGLE_EVENT_MENU') {
+            drawText("SELECT EVENT", width/2, height * 0.12, 22, "#FFD700");
             
-            drawText("TRACK MEET", width/2, step * 5 - 5, 20, "#FFD700");
-            drawText("(Play All 4)", width/2, step * 5 + 15, 10, "#FFF");
-        } 
-        
+            let step = height / 6;
+            let startY = height * 0.22;
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            ctx.fillRect(30, startY, width - 60, step - 10);
+            ctx.fillRect(30, startY + step, width - 60, step - 10);
+            ctx.fillRect(30, startY + step * 2, width - 60, step - 10);
+            ctx.fillRect(30, startY + step * 3, width - 60, step - 10);
+            
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.fillRect(30, startY + step * 4, width - 60, step - 10);
+
+            drawText("100m Dash", width/2, startY + (step / 2), 14);
+            drawText("Hurdles", width/2, startY + step + (step / 2), 14);
+            drawText("Long Jump", width/2, startY + step * 2 + (step / 2), 14);
+            drawText("Javelin", width/2, startY + step * 3 + (step / 2), 14);
+            drawText("Back", width/2, startY + step * 4 + (step / 2), 14, "#FFD700");
+        }
+
+        // 4. Leaderboard State
+        else if (state === 'LEADERBOARD') {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+            ctx.fillRect(0, 0, width, height);
+
+            drawText("LEADERBOARD", width/2, height * 0.15, 24, "#FFD700");
+            
+            let startY = height * 0.35;
+            let spacing = height * 0.1;
+
+            drawText(`100m Dash:  ${leaderboard['100M']}`, width/2, startY, 12, "white");
+            drawText(`Hurdles:    ${leaderboard['HURDLES']}`, width/2, startY + spacing, 12, "white");
+            drawText(`Long Jump:  ${leaderboard['LONG_JUMP']}`, width/2, startY + spacing * 2, 12, "white");
+            drawText(`Javelin:    ${leaderboard['JAVELIN']}`, width/2, startY + spacing * 3, 12, "white");
+
+            drawText("- Tap to return -", width/2, height * 0.85, 10, "#AAAAAA");
+        }
+
+        // 5. Gameplay & Game Over States
         else if (state === 'PLAYING' || state === 'GAMEOVER') {
-            
-            // Track lines
             for (let i = 0; i < width; i += 40) {
                 ctx.fillStyle = 'white';
                 ctx.fillRect(i + trackOffset, horizonY + 20, 20, 4);
@@ -364,7 +430,6 @@
                 ctx.fillRect(i + trackOffset + 10, horizonY + 50, 20, 4);
             }
 
-            // Hurdles
             if (selectedEventKey === 'HURDLES') {
                 hurdleDistances.forEach(h => {
                     let hx = width * 0.3 + ((h - distance) * 20); 
@@ -377,7 +442,6 @@
                 });
             }
 
-            // Foul Line
             if (selectedEventKey === 'LONG_JUMP' || selectedEventKey === 'JAVELIN') {
                 let lineX = width * 0.3 + ((50 - distance) * 20);
                 if (lineX < width && lineX > -100) {
@@ -386,7 +450,7 @@
                 }
             }
 
-            // UI
+            // Top UI Dashboard
             ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
             ctx.fillRect(0, 0, width, 80);
             
@@ -405,7 +469,7 @@
 
             drawText(`Spd: ${speed.toFixed(1)}`, width - 10, 40, 12, "white", "right");
 
-            // Thumb Zones
+            // Touch indicators
             ctx.globalAlpha = 0.15;
             ctx.fillStyle = (lastTapSide === 'right') ? 'white' : 'black';
             ctx.fillRect(0, 80, width / 2, height - 80);
@@ -413,20 +477,17 @@
             ctx.fillRect(width / 2, 80, width / 2, height - 80);
             ctx.globalAlpha = 1.0;
 
-            // Javelin
             if (selectedEventKey === 'JAVELIN' && actionTriggered) {
                 ctx.fillStyle = '#DDDDDD';
                 ctx.fillRect(javelinX, horizonY - 20 + javelinY, 50, 4);
             }
 
-            // Player
             draw8BitPlayer(width * 0.3, horizonY - 40 + jumpY);
             
             if (selectedEventKey === 'HURDLES' && !isJumping) {
                 drawText("PRESS BOTH THUMBS TO JUMP!", width/2, height * 0.47, 10, "rgba(51, 204, 255, 0.9)");
             }
 
-            // GAMEOVER OVERLAY
             if (state === 'GAMEOVER') {
                 ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
                 ctx.fillRect(0, 0, width, height);
@@ -446,6 +507,7 @@
             }
         }
 
+        // 6. Track Meet Summary
         else if (state === 'TRACK_MEET_SUMMARY') {
             ctx.fillStyle = "rgba(0, 0, 0, 0.9)";
             ctx.fillRect(0, 0, width, height);
